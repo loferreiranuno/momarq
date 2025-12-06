@@ -34,6 +34,16 @@ public class VisualSearchDbContext : DbContext
     /// </summary>
     public DbSet<ProductImage> ProductImages => Set<ProductImage>();
 
+    /// <summary>
+    /// Gets or sets the settings DbSet.
+    /// </summary>
+    public DbSet<Setting> Settings => Set<Setting>();
+
+    /// <summary>
+    /// Gets or sets the admin users DbSet.
+    /// </summary>
+    public DbSet<AdminUser> AdminUsers => Set<AdminUser>();
+
     /// <inheritdoc/>
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -171,6 +181,77 @@ public class VisualSearchDbContext : DbContext
             entity.HasIndex(e => e.IsPrimary);
 
             // Note: HNSW index will be added in migration via raw SQL
+        });
+
+        // Configure Setting entity
+        modelBuilder.Entity<Setting>(entity =>
+        {
+            entity.ToTable("settings");
+
+            entity.HasKey(e => e.Key);
+
+            entity.Property(e => e.Key)
+                .HasColumnName("key")
+                .HasMaxLength(100);
+
+            entity.Property(e => e.Value)
+                .HasColumnName("value")
+                .HasMaxLength(4000)
+                .IsRequired();
+
+            entity.Property(e => e.Type)
+                .HasColumnName("type")
+                .HasDefaultValue(SettingType.String);
+
+            entity.Property(e => e.Description)
+                .HasColumnName("description")
+                .HasMaxLength(500);
+
+            entity.Property(e => e.Category)
+                .HasColumnName("category")
+                .HasMaxLength(50)
+                .IsRequired();
+
+            entity.Property(e => e.UpdatedAt)
+                .HasColumnName("updated_at")
+                .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+            entity.HasIndex(e => e.Category);
+        });
+
+        // Configure AdminUser entity
+        modelBuilder.Entity<AdminUser>(entity =>
+        {
+            entity.ToTable("admin_users");
+
+            entity.HasKey(e => e.Id);
+
+            entity.Property(e => e.Id)
+                .HasColumnName("id");
+
+            entity.Property(e => e.Username)
+                .HasColumnName("username")
+                .HasMaxLength(100)
+                .IsRequired();
+
+            entity.Property(e => e.PasswordHash)
+                .HasColumnName("password_hash")
+                .HasMaxLength(200)
+                .IsRequired();
+
+            entity.Property(e => e.MustChangePassword)
+                .HasColumnName("must_change_password")
+                .HasDefaultValue(true);
+
+            entity.Property(e => e.CreatedAt)
+                .HasColumnName("created_at")
+                .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+            entity.Property(e => e.LastLoginAt)
+                .HasColumnName("last_login_at");
+
+            entity.HasIndex(e => e.Username)
+                .IsUnique();
         });
     }
 }

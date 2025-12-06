@@ -76,6 +76,8 @@ public class SeedDataService : IHostedService
         }
 
         _logger.LogInformation("Seeding database with initial data...");
+        await SeedSettingsAsync(dbContext, cancellationToken);
+        await SeedAdminUserAsync(dbContext, cancellationToken);
         await SeedProvidersAsync(dbContext, cancellationToken);
         await SeedProductsAsync(dbContext, cancellationToken);
 
@@ -84,6 +86,100 @@ public class SeedDataService : IHostedService
 
     /// <inheritdoc/>
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    private async Task SeedSettingsAsync(VisualSearchDbContext dbContext, CancellationToken cancellationToken)
+    {
+        if (await dbContext.Settings.AnyAsync(cancellationToken))
+        {
+            _logger.LogInformation("Settings already exist, skipping settings seed.");
+            return;
+        }
+
+        var defaultSettings = new List<Setting>
+        {
+            new()
+            {
+                Key = "search.maxImageSize",
+                Value = "800",
+                Type = SettingType.Integer,
+                Category = "search",
+                Description = "Maximum image dimension (width/height) in pixels for preprocessing before search"
+            },
+            new()
+            {
+                Key = "search.jpegQuality",
+                Value = "85",
+                Type = SettingType.Integer,
+                Category = "search",
+                Description = "JPEG quality (1-100) for image compression during preprocessing"
+            },
+            new()
+            {
+                Key = "search.maxResults",
+                Value = "20",
+                Type = SettingType.Integer,
+                Category = "search",
+                Description = "Maximum number of search results to return"
+            },
+            new()
+            {
+                Key = "ui.siteName",
+                Value = "Visual Search",
+                Type = SettingType.String,
+                Category = "ui",
+                Description = "The site name displayed in the header and browser title"
+            },
+            new()
+            {
+                Key = "ui.welcomeMessage",
+                Value = "Discover products through visual search. Upload an image to find similar items.",
+                Type = SettingType.String,
+                Category = "ui",
+                Description = "Welcome message displayed on the home page"
+            },
+            new()
+            {
+                Key = "ui.primaryColor",
+                Value = "#8B7355",
+                Type = SettingType.String,
+                Category = "ui",
+                Description = "Primary accent color for the UI"
+            },
+            new()
+            {
+                Key = "ui.showSimilarityScore",
+                Value = "true",
+                Type = SettingType.Boolean,
+                Category = "ui",
+                Description = "Whether to show similarity percentage on search results"
+            }
+        };
+
+        dbContext.Settings.AddRange(defaultSettings);
+        await dbContext.SaveChangesAsync(cancellationToken);
+        _logger.LogInformation("Seeded {Count} default settings", defaultSettings.Count);
+    }
+
+    private async Task SeedAdminUserAsync(VisualSearchDbContext dbContext, CancellationToken cancellationToken)
+    {
+        if (await dbContext.AdminUsers.AnyAsync(cancellationToken))
+        {
+            _logger.LogInformation("Admin user already exists, skipping admin seed.");
+            return;
+        }
+
+        // Default admin user with password that must be changed on first login
+        var adminUser = new AdminUser
+        {
+            Username = "admin",
+            PasswordHash = BCrypt.Net.BCrypt.HashPassword("admin123"),
+            MustChangePassword = true
+        };
+
+        dbContext.AdminUsers.Add(adminUser);
+        await dbContext.SaveChangesAsync(cancellationToken);
+        _logger.LogInformation("Created default admin user. Username: admin, Password: admin123 (must change on first login)");
+    }
 
     private static async Task SeedProvidersAsync(VisualSearchDbContext dbContext, CancellationToken cancellationToken)
     {

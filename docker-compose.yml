@@ -48,13 +48,13 @@ services:
   # Nginx (frontend + reverse proxy)
   nginx:
     build:
-      context: ./deploy/nginx
-      dockerfile: Dockerfile
+      context: ./src/frontend
+      dockerfile: ../../deploy/nginx/Dockerfile
       additional_contexts:
-        frontend: ./src/frontend
+        deploy: ./deploy/nginx
     container_name: visualsearch-nginx
     ports:
-      - "80:80"
+      - "3000:80"
     depends_on:
       api:
         condition: service_healthy

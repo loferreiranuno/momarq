@@ -1,4 +1,8 @@
+using System.Text;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
+using Microsoft.OpenApi.Models;
 using Npgsql;
 using Pgvector.Npgsql;
 using VisualSearch.Api.Data;
@@ -31,8 +35,14 @@ builder.Services.AddDbContext<VisualSearchDbContext>(options =>
         });
 });
 
+// Add memory cache for settings
+builder.Services.AddMemoryCache();
+
 // Add CLIP embedding service (singleton for model reuse)
 builder.Services.AddSingleton<ClipEmbeddingService>();
+
+// Add settings service (singleton for SSE connections)
+builder.Services.AddSingleton<SettingsService>();
 
 // Add HTTP client factory for downloading images
 builder.Services.AddHttpClient();
@@ -40,7 +50,30 @@ builder.Services.AddHttpClient();
 // Add seed data service (runs on startup)
 builder.Services.AddHostedService<SeedDataService>();
 
-// Add OpenAPI/Swagger
+// Configure JWT authentication
+var jwtKey = builder.Configuration["Jwt:Key"] ?? "VisualSearch-Default-JWT-Key-Change-In-Production-2024!";
+var jwtIssuer = builder.Configuration["Jwt:Issuer"] ?? "VisualSearch.Api";
+var jwtAudience = builder.Configuration["Jwt:Audience"] ?? "VisualSearch.Frontend";
+
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidateAudience = true,
+            ValidateLifetime = true,
+            ValidateIssuerSigningKey = true,
+            ValidIssuer = jwtIssuer,
+            ValidAudience = jwtAudience,
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey))
+        };
+    });
+
+builder.Services.AddAuthorizationBuilder()
+    .AddPolicy("Admin", policy => policy.RequireRole("Admin"));
+
+// Add OpenAPI/Swagger with JWT support
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
 {
@@ -49,6 +82,31 @@ builder.Services.AddSwaggerGen(options =>
         Title = "Visual Search API",
         Version = "v1",
         Description = "High-performance visual similarity search API using CLIP embeddings and pgvector."
+    });
+
+    // Add JWT authentication to Swagger
+    options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        Description = "JWT Authorization header using the Bearer scheme. Enter 'Bearer' [space] and then your token.",
+        Name = "Authorization",
+        In = ParameterLocation.Header,
+        Type = SecuritySchemeType.ApiKey,
+        Scheme = "Bearer"
+    });
+
+    options.AddSecurityRequirement(new OpenApiSecurityRequirement
+    {
+        {
+            new OpenApiSecurityScheme
+            {
+                Reference = new OpenApiReference
+                {
+                    Type = ReferenceType.SecurityScheme,
+                    Id = "Bearer"
+                }
+            },
+            Array.Empty<string>()
+        }
     });
 });
 
@@ -64,6 +122,10 @@ app.UseSwaggerUI(options =>
     options.RoutePrefix = "swagger";
 });
 
+// Enable authentication and authorization
+app.UseAuthentication();
+app.UseAuthorization();
+
 // ========== Endpoints ==========
 
 // Health check endpoint
@@ -71,10 +133,13 @@ app.MapGet("/health", () => Results.Ok(new { Status = "Healthy", Timestamp = Dat
     .WithName("HealthCheck")
     .WithTags("System");
 
-// Map search endpoints (binary protocol)
-app.MapSearchEndpoints();
+// Map authentication endpoints
+app.MapAuthEndpoints();
 
-// Map image search endpoint (fast, server-side ML)
+// Map settings endpoints
+app.MapSettingsEndpoints();
+
+// Map image search endpoint (server-side ML)
 app.MapImageSearchEndpoints();
 
 // Map admin endpoints (JSON REST)
