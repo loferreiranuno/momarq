@@ -1,0 +1,77 @@
+services:
+  # PostgreSQL with pgvector
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: visualsearch-postgres
+    environment:
+      POSTGRES_USER: vsuser
+      POSTGRES_PASSWORD: vspassword123
+      POSTGRES_DB: visualsearch
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vsuser -d visualsearch"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - visualsearch-network
+
+  # .NET API
+  api:
+    build:
+      context: ./src/backend/VisualSearch.Api
+      dockerfile: Dockerfile
+    container_name: visualsearch-api
+    ports:
+      - "5000:8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ConnectionStrings__DefaultConnection=Host=postgres;Database=visualsearch;Username=vsuser;Password=vspassword123
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 -O - http://localhost:8080/health > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+    networks:
+      - visualsearch-network
+
+  # Nginx (frontend + reverse proxy)
+  nginx:
+    build:
+      context: ./deploy/nginx
+      dockerfile: Dockerfile
+      additional_contexts:
+        frontend: ./src/frontend
+    container_name: visualsearch-nginx
+    ports:
+      - "80:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - visualsearch-network
+
+volumes:
+  postgres_data:
+    name: visualsearch-postgres-data
+
+networks:
+  visualsearch-network:
+    name: visualsearch-network
+    driver: bridge

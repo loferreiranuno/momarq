@@ -1,0 +1,1409 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visual Search - AI-Powered Room Furniture Finder</title>
+    <style>
+        :root {
+            --primary: #6366f1;
+            --primary-dark: #4f46e5;
+            --secondary: #ec4899;
+            --background: #0f172a;
+            --surface: #1e293b;
+            --surface-light: #334155;
+            --text: #f8fafc;
+            --text-muted: #94a3b8;
+            --success: #22c55e;
+            --warning: #f59e0b;
+            --error: #ef4444;
+            --glass: rgba(255, 255, 255, 0.05);
+            --glass-border: rgba(255, 255, 255, 0.1);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: var(--background);
+            color: var(--text);
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        /* Animated gradient background */
+        .bg-gradient {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: 
+                radial-gradient(ellipse at 20% 20%, rgba(99, 102, 241, 0.15) 0%, transparent 50%),
+                radial-gradient(ellipse at 80% 80%, rgba(236, 72, 153, 0.15) 0%, transparent 50%),
+                radial-gradient(ellipse at 50% 50%, rgba(34, 197, 94, 0.05) 0%, transparent 70%);
+            animation: gradientShift 20s ease-in-out infinite;
+            z-index: -1;
+        }
+
+        @keyframes gradientShift {
+            0%, 100% { transform: scale(1) rotate(0deg); }
+            50% { transform: scale(1.1) rotate(5deg); }
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        /* Header */
+        header {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 0.5rem;
+        }
+
+        .subtitle {
+            color: var(--text-muted);
+            font-size: 1.1rem;
+        }
+
+        /* Model Loading Status */
+        .model-status {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 1rem;
+            margin: 1.5rem 0;
+            padding: 1rem 2rem;
+            background: var(--glass);
+            border: 1px solid var(--glass-border);
+            border-radius: 1rem;
+            backdrop-filter: blur(10px);
+            max-width: 600px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: var(--warning);
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        .status-indicator.ready {
+            background: var(--success);
+            animation: none;
+        }
+
+        .status-indicator.error {
+            background: var(--error);
+            animation: none;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.5; transform: scale(1.2); }
+        }
+
+        .status-text {
+            flex: 1;
+        }
+
+        .status-title {
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+        }
+
+        .status-detail {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+
+        /* Progress Bar */
+        .progress-container {
+            width: 100%;
+            margin-top: 0.75rem;
+        }
+
+        .progress-bar {
+            height: 6px;
+            background: var(--surface-light);
+            border-radius: 3px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--primary), var(--secondary));
+            border-radius: 3px;
+            width: 0%;
+            transition: width 0.3s ease;
+            position: relative;
+        }
+
+        .progress-fill::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+            animation: shimmer 2s infinite;
+        }
+
+        @keyframes shimmer {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(100%); }
+        }
+
+        .progress-stats {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-top: 0.5rem;
+        }
+
+        /* Drop Zone */
+        .drop-zone {
+            position: relative;
+            border: 2px dashed var(--glass-border);
+            border-radius: 1.5rem;
+            padding: 3rem;
+            text-align: center;
+            background: var(--glass);
+            backdrop-filter: blur(10px);
+            transition: all 0.3s ease;
+            cursor: pointer;
+            margin-bottom: 2rem;
+        }
+
+        .drop-zone:hover,
+        .drop-zone.dragover {
+            border-color: var(--primary);
+            background: rgba(99, 102, 241, 0.1);
+            transform: scale(1.01);
+        }
+
+        .drop-zone.disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .drop-icon {
+            font-size: 4rem;
+            margin-bottom: 1rem;
+            opacity: 0.7;
+        }
+
+        .drop-text {
+            font-size: 1.2rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .drop-hint {
+            font-size: 0.9rem;
+            color: var(--text-muted);
+        }
+
+        .drop-hint kbd {
+            background: var(--surface-light);
+            padding: 0.2rem 0.5rem;
+            border-radius: 0.25rem;
+            font-family: inherit;
+        }
+
+        /* Image Preview with Scanning Effect */
+        .preview-container {
+            position: relative;
+            display: none;
+            margin-bottom: 2rem;
+        }
+
+        .preview-container.active {
+            display: block;
+        }
+
+        .preview-wrapper {
+            position: relative;
+            display: inline-block;
+            max-width: 100%;
+            border-radius: 1rem;
+            overflow: hidden;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+        }
+
+        .preview-image {
+            display: block;
+            max-width: 100%;
+            max-height: 500px;
+            object-fit: contain;
+        }
+
+        /* Scanning Animation Overlay */
+        .scan-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            pointer-events: none;
+            overflow: hidden;
+        }
+
+        .scan-line {
+            position: absolute;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, transparent, var(--primary), var(--secondary), var(--primary), transparent);
+            box-shadow: 0 0 20px var(--primary), 0 0 40px var(--primary);
+            opacity: 0;
+        }
+
+        .scan-line.active {
+            animation: scanLine 2s ease-in-out infinite;
+        }
+
+        @keyframes scanLine {
+            0% { top: 0; opacity: 1; }
+            50% { opacity: 1; }
+            100% { top: 100%; opacity: 0; }
+        }
+
+        .scan-grid {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: 
+                linear-gradient(rgba(99, 102, 241, 0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(99, 102, 241, 0.03) 1px, transparent 1px);
+            background-size: 20px 20px;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+
+        .scan-grid.active {
+            opacity: 1;
+        }
+
+        /* Detected Objects Bounding Boxes */
+        .detection-box {
+            position: absolute;
+            border: 2px solid;
+            border-radius: 0.5rem;
+            background: rgba(0, 0, 0, 0.3);
+            backdrop-filter: blur(2px);
+            opacity: 0;
+            transform: scale(0.9);
+            transition: all 0.3s ease;
+        }
+
+        .detection-box.visible {
+            opacity: 1;
+            transform: scale(1);
+        }
+
+        .detection-label {
+            position: absolute;
+            top: -1.75rem;
+            left: -2px;
+            padding: 0.25rem 0.75rem;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            border-radius: 0.5rem 0.5rem 0 0;
+            white-space: nowrap;
+        }
+
+        .detection-score {
+            position: absolute;
+            bottom: 0.25rem;
+            right: 0.25rem;
+            padding: 0.15rem 0.5rem;
+            font-size: 0.65rem;
+            background: rgba(0, 0, 0, 0.6);
+            border-radius: 0.25rem;
+        }
+
+        /* Status Messages */
+        .processing-status {
+            text-align: center;
+            padding: 1rem;
+            margin-bottom: 1rem;
+            display: none;
+        }
+
+        .processing-status.active {
+            display: block;
+        }
+
+        .processing-spinner {
+            display: inline-block;
+            width: 24px;
+            height: 24px;
+            border: 3px solid var(--surface-light);
+            border-top-color: var(--primary);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 0.5rem;
+            vertical-align: middle;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Results Section */
+        .results-section {
+            display: none;
+        }
+
+        .results-section.active {
+            display: block;
+        }
+
+        .results-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 1.5rem;
+        }
+
+        .results-title {
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+
+        .results-time {
+            font-size: 0.9rem;
+            color: var(--text-muted);
+        }
+
+        /* Object Results Group */
+        .object-results {
+            margin-bottom: 2rem;
+        }
+
+        .object-header {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 1rem;
+            padding: 0.75rem 1rem;
+            background: var(--glass);
+            border: 1px solid var(--glass-border);
+            border-radius: 0.75rem;
+        }
+
+        .object-color {
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+        }
+
+        .object-label {
+            font-weight: 600;
+            text-transform: capitalize;
+        }
+
+        .object-count {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            margin-left: auto;
+        }
+
+        /* Product Cards Grid */
+        .products-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+            gap: 1.25rem;
+        }
+
+        .product-card {
+            background: var(--glass);
+            border: 1px solid var(--glass-border);
+            border-radius: 1rem;
+            overflow: hidden;
+            transition: all 0.3s ease;
+        }
+
+        .product-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+            border-color: var(--primary);
+        }
+
+        .product-image-container {
+            position: relative;
+            aspect-ratio: 1;
+            background: var(--surface);
+            overflow: hidden;
+        }
+
+        .product-image {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transition: transform 0.3s ease;
+        }
+
+        .product-card:hover .product-image {
+            transform: scale(1.05);
+        }
+
+        .similarity-badge {
+            position: absolute;
+            top: 0.5rem;
+            right: 0.5rem;
+            padding: 0.25rem 0.6rem;
+            font-size: 0.7rem;
+            font-weight: 600;
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(4px);
+            border-radius: 1rem;
+        }
+
+        .similarity-badge.high {
+            background: rgba(34, 197, 94, 0.8);
+        }
+
+        .similarity-badge.medium {
+            background: rgba(245, 158, 11, 0.8);
+        }
+
+        .provider-badge {
+            position: absolute;
+            bottom: 0.5rem;
+            left: 0.5rem;
+            padding: 0.2rem 0.5rem;
+            font-size: 0.65rem;
+            font-weight: 600;
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(4px);
+            border-radius: 0.25rem;
+            text-transform: uppercase;
+        }
+
+        .product-info {
+            padding: 1rem;
+        }
+
+        .product-name {
+            font-weight: 600;
+            font-size: 0.95rem;
+            margin-bottom: 0.5rem;
+            line-height: 1.3;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+
+        .product-price {
+            font-size: 1.1rem;
+            font-weight: 700;
+            color: var(--primary);
+        }
+
+        /* Skeleton Loading */
+        .skeleton {
+            background: linear-gradient(90deg, var(--surface) 25%, var(--surface-light) 50%, var(--surface) 75%);
+            background-size: 200% 100%;
+            animation: skeleton 1.5s ease-in-out infinite;
+        }
+
+        @keyframes skeleton {
+            0% { background-position: 200% 0; }
+            100% { background-position: -200% 0; }
+        }
+
+        .skeleton-card {
+            background: var(--glass);
+            border: 1px solid var(--glass-border);
+            border-radius: 1rem;
+            overflow: hidden;
+        }
+
+        .skeleton-image {
+            aspect-ratio: 1;
+        }
+
+        .skeleton-text {
+            height: 1rem;
+            margin: 1rem;
+            border-radius: 0.25rem;
+        }
+
+        .skeleton-text.short {
+            width: 60%;
+        }
+
+        /* Footer */
+        footer {
+            text-align: center;
+            padding: 2rem;
+            color: var(--text-muted);
+            font-size: 0.85rem;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .container {
+                padding: 1rem;
+            }
+
+            h1 {
+                font-size: 1.75rem;
+            }
+
+            .drop-zone {
+                padding: 2rem 1rem;
+            }
+
+            .products-grid {
+                grid-template-columns: repeat(2, 1fr);
+                gap: 0.75rem;
+            }
+
+            .product-info {
+                padding: 0.75rem;
+            }
+
+            .product-name {
+                font-size: 0.85rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="bg-gradient"></div>
+    
+    <div class="container">
+        <header>
+            <h1>🏠 Visual Search</h1>
+            <p class="subtitle">Cole uma imagem de quarto gerada por IA e encontre móveis similares</p>
+        </header>
+
+        <!-- Model Loading Status -->
+        <div class="model-status" id="modelStatus">
+            <div class="status-indicator" id="statusIndicator"></div>
+            <div class="status-text">
+                <div class="status-title" id="statusTitle">A preparar IA...</div>
+                <div class="status-detail" id="statusDetail">A inicializar modelos de deteção</div>
+                <div class="progress-container" id="progressContainer">
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progressFill"></div>
+                    </div>
+                    <div class="progress-stats">
+                        <span id="progressPercent">0%</span>
+                        <span id="progressSpeed"></span>
+                        <span id="progressEta"></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Drop Zone -->
+        <div class="drop-zone disabled" id="dropZone">
+            <div class="drop-icon">🖼️</div>
+            <div class="drop-text">Arraste uma imagem ou cole com <kbd>Ctrl+V</kbd></div>
+            <div class="drop-hint">Suporta imagens de quartos geradas por IA (JPEG, PNG, WebP)</div>
+            <input type="file" id="fileInput" accept="image/*" hidden>
+        </div>
+
+        <!-- Image Preview with Scanning -->
+        <div class="preview-container" id="previewContainer">
+            <div class="preview-wrapper" id="previewWrapper">
+                <img class="preview-image" id="previewImage" alt="Preview">
+                <div class="scan-overlay" id="scanOverlay">
+                    <div class="scan-grid" id="scanGrid"></div>
+                    <div class="scan-line" id="scanLine"></div>
+                </div>
+                <!-- Detection boxes will be added here dynamically -->
+            </div>
+        </div>
+
+        <!-- Processing Status -->
+        <div class="processing-status" id="processingStatus">
+            <span class="processing-spinner"></span>
+            <span id="processingText">A processar...</span>
+        </div>
+
+        <!-- Results Section -->
+        <div class="results-section" id="resultsSection">
+            <div class="results-header">
+                <h2 class="results-title">Produtos Encontrados</h2>
+                <span class="results-time" id="resultsTime"></span>
+            </div>
+            <div id="resultsContent"></div>
+        </div>
+    </div>
+
+    <footer>
+        Visual Search POC • Powered by YOLO + CLIP + pgvector
+    </footer>
+
+    <script type="module">
+        // ============================================================
+        // Visual Search Frontend - Transformers.js + Binary Protocol
+        // ============================================================
+
+        import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2';
+
+        // Configure Transformers.js
+        env.allowLocalModels = false;
+        env.useBrowserCache = true;
+
+        // ============================================================
+        // State Management
+        // ============================================================
+        
+        const state = {
+            detector: null,
+            embedder: null,
+            isModelLoading: false,
+            isModelReady: false,
+            isProcessing: false,
+            downloadProgress: {},
+            startTime: null
+        };
+
+        // Colors for detection boxes
+        const COLORS = [
+            { border: '#6366f1', bg: 'rgba(99, 102, 241, 0.2)' },
+            { border: '#ec4899', bg: 'rgba(236, 72, 153, 0.2)' },
+            { border: '#22c55e', bg: 'rgba(34, 197, 94, 0.2)' },
+            { border: '#f59e0b', bg: 'rgba(245, 158, 11, 0.2)' },
+            { border: '#06b6d4', bg: 'rgba(6, 182, 212, 0.2)' },
+            { border: '#8b5cf6', bg: 'rgba(139, 92, 246, 0.2)' },
+            { border: '#ef4444', bg: 'rgba(239, 68, 68, 0.2)' },
+            { border: '#14b8a6', bg: 'rgba(20, 184, 166, 0.2)' }
+        ];
+
+        // Relevant furniture/decor labels to detect
+        const RELEVANT_LABELS = new Set([
+            'couch', 'sofa', 'bed', 'chair', 'dining table', 'table',
+            'potted plant', 'plant', 'lamp', 'tv', 'television', 'vase',
+            'clock', 'book', 'bottle', 'cup', 'bowl', 'rug', 'carpet',
+            'curtain', 'pillow', 'blanket', 'mirror', 'shelf', 'cabinet',
+            'desk', 'armchair', 'ottoman', 'nightstand', 'dresser', 'wardrobe',
+            'bookshelf', 'chandelier', 'painting', 'picture', 'frame', 'candle',
+            'flower', 'cushion', 'throw', 'basket', 'storage', 'drawer'
+        ]);
+
+        // ============================================================
+        // DOM Elements
+        // ============================================================
+
+        const elements = {
+            modelStatus: document.getElementById('modelStatus'),
+            statusIndicator: document.getElementById('statusIndicator'),
+            statusTitle: document.getElementById('statusTitle'),
+            statusDetail: document.getElementById('statusDetail'),
+            progressContainer: document.getElementById('progressContainer'),
+            progressFill: document.getElementById('progressFill'),
+            progressPercent: document.getElementById('progressPercent'),
+            progressSpeed: document.getElementById('progressSpeed'),
+            progressEta: document.getElementById('progressEta'),
+            dropZone: document.getElementById('dropZone'),
+            fileInput: document.getElementById('fileInput'),
+            previewContainer: document.getElementById('previewContainer'),
+            previewWrapper: document.getElementById('previewWrapper'),
+            previewImage: document.getElementById('previewImage'),
+            scanOverlay: document.getElementById('scanOverlay'),
+            scanGrid: document.getElementById('scanGrid'),
+            scanLine: document.getElementById('scanLine'),
+            processingStatus: document.getElementById('processingStatus'),
+            processingText: document.getElementById('processingText'),
+            resultsSection: document.getElementById('resultsSection'),
+            resultsTime: document.getElementById('resultsTime'),
+            resultsContent: document.getElementById('resultsContent')
+        };
+
+        // ============================================================
+        // Model Loading with Progress
+        // ============================================================
+
+        async function loadModels() {
+            if (state.isModelLoading || state.isModelReady) return;
+            
+            state.isModelLoading = true;
+            state.startTime = Date.now();
+            
+            updateModelStatus('loading', 'A carregar modelos de IA...', 'YOLO para deteção de objetos');
+
+            try {
+                // Load object detection model (YOLO) - use quantized for speed
+                updateModelStatus('loading', 'A carregar YOLO...', 'Modelo de deteção de objetos');
+                
+                state.detector = await pipeline('object-detection', 'Xenova/yolos-tiny', {
+                    progress_callback: (progress) => handleProgress('yolo', progress),
+                    quantized: true
+                });
+
+                // Load CLIP model for embeddings - use quantized for speed
+                updateModelStatus('loading', 'A carregar CLIP...', 'Modelo de embeddings visuais');
+                
+                state.embedder = await pipeline('feature-extraction', 'Xenova/clip-vit-base-patch16', {
+                    progress_callback: (progress) => handleProgress('clip', progress),
+                    quantized: true
+                });
+
+                state.isModelReady = true;
+                state.isModelLoading = false;
+
+                updateModelStatus('ready', 'IA Pronta ✓', 'Modelos carregados com sucesso');
+                elements.dropZone.classList.remove('disabled');
+
+            } catch (error) {
+                console.error('Failed to load models:', error);
+                state.isModelLoading = false;
+                updateModelStatus('error', 'Erro ao carregar modelos', error.message);
+            }
+        }
+
+        function handleProgress(model, progress) {
+            if (progress.status === 'progress') {
+                state.downloadProgress[model] = {
+                    loaded: progress.loaded || 0,
+                    total: progress.total || 0,
+                    file: progress.file || ''
+                };
+                updateProgressUI();
+            }
+        }
+
+        function updateProgressUI() {
+            const yolo = state.downloadProgress.yolo || { loaded: 0, total: 1 };
+            const clip = state.downloadProgress.clip || { loaded: 0, total: 1 };
+            
+            const totalLoaded = yolo.loaded + clip.loaded;
+            const totalSize = yolo.total + clip.total;
+            const percent = totalSize > 0 ? Math.round((totalLoaded / totalSize) * 100) : 0;
+            
+            elements.progressFill.style.width = `${percent}%`;
+            elements.progressPercent.textContent = `${percent}%`;
+            
+            // Calculate speed
+            const elapsed = (Date.now() - state.startTime) / 1000;
+            if (elapsed > 0 && totalLoaded > 0) {
+                const speed = totalLoaded / elapsed / 1024 / 1024;
+                elements.progressSpeed.textContent = `${speed.toFixed(1)} MB/s`;
+                
+                // ETA
+                if (totalSize > totalLoaded) {
+                    const remaining = (totalSize - totalLoaded) / 1024 / 1024;
+                    const eta = Math.round(remaining / speed);
+                    elements.progressEta.textContent = eta > 60 
+                        ? `~${Math.round(eta/60)}min restantes`
+                        : `~${eta}s restantes`;
+                }
+            }
+
+            // Show current file
+            const currentFile = clip.file || yolo.file;
+            if (currentFile) {
+                const fileName = currentFile.split('/').pop();
+                elements.statusDetail.textContent = `A descarregar: ${fileName}`;
+            }
+        }
+
+        function updateModelStatus(status, title, detail) {
+            elements.statusTitle.textContent = title;
+            elements.statusDetail.textContent = detail;
+            
+            elements.statusIndicator.classList.remove('ready', 'error');
+            
+            if (status === 'ready') {
+                elements.statusIndicator.classList.add('ready');
+                elements.progressContainer.style.display = 'none';
+            } else if (status === 'error') {
+                elements.statusIndicator.classList.add('error');
+                elements.progressContainer.style.display = 'none';
+            } else {
+                elements.progressContainer.style.display = 'block';
+            }
+        }
+
+        // ============================================================
+        // Image Handling
+        // ============================================================
+
+        function setupDropZone() {
+            const dropZone = elements.dropZone;
+            const fileInput = elements.fileInput;
+
+            // Click to select
+            dropZone.addEventListener('click', () => {
+                if (!dropZone.classList.contains('disabled')) {
+                    fileInput.click();
+                }
+            });
+
+            // File input change
+            fileInput.addEventListener('change', (e) => {
+                if (e.target.files?.[0]) {
+                    handleImageFile(e.target.files[0]);
+                }
+            });
+
+            // Drag and drop
+            dropZone.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                if (!dropZone.classList.contains('disabled')) {
+                    dropZone.classList.add('dragover');
+                }
+            });
+
+            dropZone.addEventListener('dragleave', () => {
+                dropZone.classList.remove('dragover');
+            });
+
+            dropZone.addEventListener('drop', (e) => {
+                e.preventDefault();
+                dropZone.classList.remove('dragover');
+                
+                if (dropZone.classList.contains('disabled')) return;
+                
+                const file = e.dataTransfer.files?.[0];
+                if (file?.type.startsWith('image/')) {
+                    handleImageFile(file);
+                }
+            });
+
+            // Paste (Ctrl+V)
+            document.addEventListener('paste', (e) => {
+                if (!state.isModelReady || state.isProcessing) return;
+                
+                const items = e.clipboardData?.items;
+                if (!items) return;
+
+                for (const item of items) {
+                    if (item.type.startsWith('image/')) {
+                        const file = item.getAsFile();
+                        if (file) {
+                            handleImageFile(file);
+                            break;
+                        }
+                    }
+                }
+            });
+        }
+
+        async function handleImageFile(file) {
+            if (state.isProcessing) return;
+            
+            state.isProcessing = true;
+            const startTime = performance.now();
+
+            // Show preview
+            const imageUrl = URL.createObjectURL(file);
+            elements.previewImage.src = imageUrl;
+            elements.previewContainer.classList.add('active');
+            elements.resultsSection.classList.remove('active');
+
+            // Clear previous detection boxes
+            clearDetectionBoxes();
+
+            // Wait for image to load
+            await new Promise(resolve => {
+                elements.previewImage.onload = resolve;
+            });
+
+            try {
+                // Start scanning animation
+                startScanAnimation();
+                setProcessingStatus('A detetar objetos...');
+
+                // Run object detection
+                const detections = await detectObjects(imageUrl);
+                
+                if (detections.length === 0) {
+                    setProcessingStatus('Nenhum objeto relevante detetado');
+                    state.isProcessing = false;
+                    stopScanAnimation();
+                    return;
+                }
+
+                // Show detection boxes
+                showDetectionBoxes(detections);
+                setProcessingStatus(`${detections.length} objetos detetados. A gerar embeddings...`);
+
+                // Generate CLIP embeddings for each detected object
+                const objectsWithEmbeddings = await generateEmbeddings(imageUrl, detections);
+                
+                setProcessingStatus('A procurar produtos similares...');
+
+                // Send to backend
+                const results = await searchProducts(objectsWithEmbeddings);
+                
+                stopScanAnimation();
+
+                // Show results
+                const totalTime = Math.round(performance.now() - startTime);
+                showResults(results, detections, totalTime);
+
+            } catch (error) {
+                console.error('Processing error:', error);
+                setProcessingStatus(`Erro: ${error.message}`);
+                stopScanAnimation();
+            } finally {
+                state.isProcessing = false;
+            }
+        }
+
+        // ============================================================
+        // Object Detection
+        // ============================================================
+
+        async function detectObjects(imageUrl) {
+            const results = await state.detector(imageUrl, {
+                threshold: 0.5,  // Higher threshold = faster, fewer false positives
+                percentage: true
+            });
+
+            // Filter for relevant furniture/decor items
+            const relevant = results.filter(det => {
+                const label = det.label.toLowerCase();
+                return RELEVANT_LABELS.has(label) || 
+                       Array.from(RELEVANT_LABELS).some(rl => label.includes(rl) || rl.includes(label));
+            });
+
+            // Deduplicate similar detections (IoU threshold)
+            return deduplicateDetections(relevant);
+        }
+
+        function deduplicateDetections(detections, iouThreshold = 0.5) {
+            const sorted = [...detections].sort((a, b) => b.score - a.score);
+            const kept = [];
+
+            for (const det of sorted) {
+                let dominated = false;
+                for (const keptDet of kept) {
+                    if (calculateIoU(det.box, keptDet.box) > iouThreshold) {
+                        dominated = true;
+                        break;
+                    }
+                }
+                if (!dominated) {
+                    kept.push(det);
+                }
+            }
+
+            return kept.slice(0, 5); // Max 5 objects for speed
+        }
+
+        function calculateIoU(box1, box2) {
+            const x1 = Math.max(box1.xmin, box2.xmin);
+            const y1 = Math.max(box1.ymin, box2.ymin);
+            const x2 = Math.min(box1.xmax, box2.xmax);
+            const y2 = Math.min(box1.ymax, box2.ymax);
+
+            if (x2 <= x1 || y2 <= y1) return 0;
+
+            const intersection = (x2 - x1) * (y2 - y1);
+            const area1 = (box1.xmax - box1.xmin) * (box1.ymax - box1.ymin);
+            const area2 = (box2.xmax - box2.xmin) * (box2.ymax - box2.ymin);
+
+            return intersection / (area1 + area2 - intersection);
+        }
+
+        // ============================================================
+        // CLIP Embeddings
+        // ============================================================
+
+        async function generateEmbeddings(imageUrl, detections) {
+            const img = elements.previewImage;
+            const totalDetections = detections.length;
+            
+            setProcessingStatus(`A gerar ${totalDetections} embeddings em paralelo...`);
+
+            // Process all embeddings in parallel for speed
+            const promises = detections.map(async (detection, i) => {
+                try {
+                    // Crop the detected region (smaller size = faster)
+                    const croppedDataUrl = cropImage(img, detection.box, 128);
+                    
+                    // Generate CLIP embedding
+                    const output = await state.embedder(croppedDataUrl, {
+                        pooling: 'mean',
+                        normalize: true
+                    });
+
+                    // Extract the embedding vector - handle different output shapes
+                    let embedding;
+                    if (output.data) {
+                        const rawData = Array.from(output.data);
+                        
+                        if (output.dims && output.dims.length === 3) {
+                            const seqLen = output.dims[1];
+                            const features = output.dims[2];
+                            embedding = new Array(features).fill(0);
+                            for (let s = 0; s < seqLen; s++) {
+                                for (let f = 0; f < features; f++) {
+                                    embedding[f] += rawData[s * features + f];
+                                }
+                            }
+                            embedding = embedding.map(v => v / seqLen);
+                        } else {
+                            embedding = rawData;
+                        }
+                    } else {
+                        throw new Error('No data in CLIP output');
+                    }
+
+                    // Ensure exactly 512 dimensions
+                    if (embedding.length !== 512) {
+                        if (embedding.length > 512) {
+                            embedding = embedding.slice(0, 512);
+                        } else {
+                            while (embedding.length < 512) embedding.push(0);
+                        }
+                    }
+                    
+                    // Normalize to unit vector
+                    const magnitude = Math.sqrt(embedding.reduce((sum, v) => sum + v * v, 0));
+                    const normalized = magnitude > 0 ? embedding.map(v => v / magnitude) : embedding;
+
+                    return {
+                        label: detection.label,
+                        score: detection.score,
+                        box: detection.box,
+                        embedding: normalized
+                    };
+                } catch (error) {
+                    console.error(`Failed to generate embedding for ${detection.label}:`, error);
+                    return null;
+                }
+            });
+
+            const results = await Promise.all(promises);
+            return results.filter(r => r !== null);
+        }
+
+        function cropImage(img, box, size = 128) {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+
+            // Convert percentage to pixels
+            const x = box.xmin * img.naturalWidth;
+            const y = box.ymin * img.naturalHeight;
+            const width = (box.xmax - box.xmin) * img.naturalWidth;
+            const height = (box.ymax - box.ymin) * img.naturalHeight;
+
+            // Add padding (5%)
+            const padding = Math.min(width, height) * 0.05;
+            const cropX = Math.max(0, x - padding);
+            const cropY = Math.max(0, y - padding);
+            const cropW = Math.min(img.naturalWidth - cropX, width + padding * 2);
+            const cropH = Math.min(img.naturalHeight - cropY, height + padding * 2);
+
+            // Use smaller size for faster processing
+            canvas.width = size;
+            canvas.height = size;
+
+            ctx.drawImage(img, cropX, cropY, cropW, cropH, 0, 0, size, size);
+
+            return canvas.toDataURL('image/jpeg', 0.7);
+        }
+
+        // ============================================================
+        // Binary Protocol
+        // ============================================================
+
+        function encodeBinaryRequest(objects) {
+            // Calculate total size
+            let totalSize = 4; // object count
+            for (const obj of objects) {
+                const labelBytes = new TextEncoder().encode(obj.label);
+                totalSize += 4 + labelBytes.length + 512 * 4; // labelLen + label + embedding
+            }
+
+            const buffer = new ArrayBuffer(totalSize);
+            const view = new DataView(buffer);
+            let offset = 0;
+
+            // Write object count
+            view.setInt32(offset, objects.length, true);
+            offset += 4;
+
+            // Write each object
+            for (const obj of objects) {
+                const labelBytes = new TextEncoder().encode(obj.label);
+                
+                // Label length
+                view.setInt32(offset, labelBytes.length, true);
+                offset += 4;
+
+                // Label bytes
+                new Uint8Array(buffer, offset, labelBytes.length).set(labelBytes);
+                offset += labelBytes.length;
+
+                // Embedding (512 floats)
+                for (let i = 0; i < 512; i++) {
+                    view.setFloat32(offset, obj.embedding[i] || 0, true);
+                    offset += 4;
+                }
+            }
+
+            return buffer;
+        }
+
+        function decodeBinaryResponse(buffer) {
+            const view = new DataView(buffer);
+            const decoder = new TextDecoder();
+            let offset = 0;
+
+            const results = [];
+            const objectCount = view.getInt32(offset, true);
+            offset += 4;
+
+            for (let i = 0; i < objectCount; i++) {
+                // Read label
+                const labelLen = view.getInt32(offset, true);
+                offset += 4;
+                const labelBytes = new Uint8Array(buffer, offset, labelLen);
+                const label = decoder.decode(labelBytes);
+                offset += labelLen;
+
+                // Read results count
+                const resultCount = view.getInt32(offset, true);
+                offset += 4;
+
+                const products = [];
+                for (let j = 0; j < resultCount; j++) {
+                    // Product ID
+                    const productId = view.getInt32(offset, true);
+                    offset += 4;
+
+                    // Score
+                    const score = view.getFloat32(offset, true);
+                    offset += 4;
+
+                    // Name
+                    const nameLen = view.getInt32(offset, true);
+                    offset += 4;
+                    const nameBytes = new Uint8Array(buffer, offset, nameLen);
+                    const name = decoder.decode(nameBytes);
+                    offset += nameLen;
+
+                    // Price
+                    const price = view.getFloat32(offset, true);
+                    offset += 4;
+
+                    // Image URL
+                    const imageUrlLen = view.getInt32(offset, true);
+                    offset += 4;
+                    const imageUrlBytes = new Uint8Array(buffer, offset, imageUrlLen);
+                    const imageUrl = decoder.decode(imageUrlBytes);
+                    offset += imageUrlLen;
+
+                    // Provider name
+                    const providerLen = view.getInt32(offset, true);
+                    offset += 4;
+                    const providerBytes = new Uint8Array(buffer, offset, providerLen);
+                    const provider = decoder.decode(providerBytes);
+                    offset += providerLen;
+
+                    products.push({ productId, score, name, price, imageUrl, provider });
+                }
+
+                results.push({ label, products });
+            }
+
+            return results;
+        }
+
+        // ============================================================
+        // API Communication
+        // ============================================================
+
+        async function searchProducts(objects) {
+            if (objects.length === 0) {
+                console.warn('No objects with embeddings to search');
+                return [];
+            }
+
+            console.log('Sending search request:', {
+                objectCount: objects.length,
+                objects: objects.map(o => ({ label: o.label, embeddingLen: o.embedding?.length }))
+            });
+
+            const requestBuffer = encodeBinaryRequest(objects);
+            console.log('Request buffer size:', requestBuffer.byteLength, 'bytes');
+
+            const response = await fetch('/api/busca', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/octet-stream'
+                },
+                body: requestBuffer
+            });
+
+            if (!response.ok) {
+                // Try to get error details
+                let errorDetail = '';
+                try {
+                    const text = await response.text();
+                    errorDetail = text ? `: ${text}` : '';
+                } catch (e) {}
+                throw new Error(`Search failed: ${response.status}${errorDetail}`);
+            }
+
+            const responseBuffer = await response.arrayBuffer();
+            console.log('Response buffer size:', responseBuffer.byteLength, 'bytes');
+            return decodeBinaryResponse(responseBuffer);
+        }
+
+        // ============================================================
+        // UI Updates
+        // ============================================================
+
+        function startScanAnimation() {
+            elements.scanGrid.classList.add('active');
+            elements.scanLine.classList.add('active');
+        }
+
+        function stopScanAnimation() {
+            elements.scanGrid.classList.remove('active');
+            elements.scanLine.classList.remove('active');
+        }
+
+        function setProcessingStatus(text) {
+            elements.processingStatus.classList.add('active');
+            elements.processingText.textContent = text;
+        }
+
+        function clearDetectionBoxes() {
+            const boxes = elements.previewWrapper.querySelectorAll('.detection-box');
+            boxes.forEach(box => box.remove());
+        }
+
+        function showDetectionBoxes(detections) {
+            detections.forEach((det, index) => {
+                const color = COLORS[index % COLORS.length];
+                const box = document.createElement('div');
+                box.className = 'detection-box';
+                box.style.cssText = `
+                    left: ${det.box.xmin * 100}%;
+                    top: ${det.box.ymin * 100}%;
+                    width: ${(det.box.xmax - det.box.xmin) * 100}%;
+                    height: ${(det.box.ymax - det.box.ymin) * 100}%;
+                    border-color: ${color.border};
+                    background: ${color.bg};
+                `;
+
+                const label = document.createElement('div');
+                label.className = 'detection-label';
+                label.style.background = color.border;
+                label.textContent = det.label;
+
+                const score = document.createElement('div');
+                score.className = 'detection-score';
+                score.textContent = `${Math.round(det.score * 100)}%`;
+
+                box.appendChild(label);
+                box.appendChild(score);
+                elements.previewWrapper.appendChild(box);
+
+                // Animate in
+                setTimeout(() => box.classList.add('visible'), index * 100);
+            });
+        }
+
+        function showResults(results, detections, totalTime) {
+            elements.processingStatus.classList.remove('active');
+            elements.resultsSection.classList.add('active');
+            elements.resultsTime.textContent = `Tempo total: ${totalTime}ms`;
+
+            let html = '';
+
+            results.forEach((objectResult, index) => {
+                const color = COLORS[index % COLORS.length];
+                
+                html += `
+                    <div class="object-results">
+                        <div class="object-header">
+                            <div class="object-color" style="background: ${color.border}"></div>
+                            <span class="object-label">${objectResult.label}</span>
+                            <span class="object-count">${objectResult.products.length} produtos</span>
+                        </div>
+                        <div class="products-grid">
+                `;
+
+                objectResult.products.forEach(product => {
+                    const scoreClass = product.score > 0.7 ? 'high' : product.score > 0.5 ? 'medium' : '';
+                    html += `
+                        <div class="product-card">
+                            <div class="product-image-container">
+                                <img class="product-image" src="${product.imageUrl}" alt="${product.name}" loading="lazy">
+                                <span class="similarity-badge ${scoreClass}">${Math.round(product.score * 100)}%</span>
+                                <span class="provider-badge">${product.provider}</span>
+                            </div>
+                            <div class="product-info">
+                                <div class="product-name">${product.name}</div>
+                                <div class="product-price">€${product.price.toFixed(2)}</div>
+                            </div>
+                        </div>
+                    `;
+                });
+
+                html += `
+                        </div>
+                    </div>
+                `;
+            });
+
+            elements.resultsContent.innerHTML = html;
+        }
+
+        // ============================================================
+        // Service Worker Registration
+        // ============================================================
+
+        async function registerServiceWorker() {
+            if ('serviceWorker' in navigator) {
+                try {
+                    const registration = await navigator.serviceWorker.register('/sw.js');
+                    console.log('Service Worker registered:', registration.scope);
+                } catch (error) {
+                    console.warn('Service Worker registration failed:', error);
+                }
+            }
+        }
+
+        // ============================================================
+        // Initialize
+        // ============================================================
+
+        async function init() {
+            setupDropZone();
+            await registerServiceWorker();
+            await loadModels();
+        }
+
+        init();
+    </script>
+</body>
+</html>

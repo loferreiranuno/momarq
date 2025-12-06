@@ -1,0 +1,24 @@
+# Development overrides
+services:
+  postgres:
+    ports:
+      - "5432:5432"  # Expose for local tooling (pgAdmin, DBeaver, etc.)
+
+  api:
+    build:
+      context: ./src/backend/VisualSearch.Api
+      dockerfile: Dockerfile
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ConnectionStrings__DefaultConnection=Host=postgres;Database=visualsearch;Username=vsuser;Password=vspassword123
+    ports:
+      - "5000:8080"  # Direct API access for debugging
+    # volumes:
+    #   - ./src/backend/VisualSearch.Api:/app:ro  # Hot reload (requires rebuild)
+
+  nginx:
+    ports:
+      - "80:80"
+    volumes:
+      # Mount frontend for live reload during development
+      - ./src/frontend:/usr/share/nginx/html:ro
