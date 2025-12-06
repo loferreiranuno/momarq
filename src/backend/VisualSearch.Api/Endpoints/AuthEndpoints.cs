@@ -47,7 +47,7 @@ public static class AuthEndpoints
     private static async Task<IResult> HandleLoginAsync(
         LoginRequest request,
         VisualSearchDbContext dbContext,
-        IConfiguration configuration,
+        JwtOptions jwtOptions,
         ILogger<Program> logger,
         CancellationToken cancellationToken)
     {
@@ -70,7 +70,7 @@ public static class AuthEndpoints
         await dbContext.SaveChangesAsync(cancellationToken);
 
         // Generate JWT token
-        var token = GenerateJwtToken(user, configuration);
+        var token = GenerateJwtToken(user, jwtOptions);
 
         logger.LogInformation("User {Username} logged in successfully", request.Username);
 
@@ -147,13 +147,14 @@ public static class AuthEndpoints
         });
     }
 
-    private static string GenerateJwtToken(AdminUser user, IConfiguration configuration)
+    private static string GenerateJwtToken(AdminUser user, JwtOptions jwtOptions)
     {
-        var jwtKey = configuration["Jwt:Key"] ?? throw new InvalidOperationException("JWT key not configured");
-        var jwtIssuer = configuration["Jwt:Issuer"] ?? "VisualSearch.Api";
-        var jwtAudience = configuration["Jwt:Audience"] ?? "VisualSearch.Frontend";
+        if (string.IsNullOrWhiteSpace(jwtOptions.Key))
+        {
+            throw new InvalidOperationException("JWT key not configured. Set Jwt:Key in configuration or environment variables.");
+        }
 
-        var securityKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey));
+        var securityKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtOptions.Key));
         var credentials = new SigningCredentials(securityKey, SecurityAlgorithms.HmacSha256);
 
         var claims = new[]
@@ -165,8 +166,8 @@ public static class AuthEndpoints
         };
 
         var token = new JwtSecurityToken(
-            issuer: jwtIssuer,
-            audience: jwtAudience,
+            issuer: jwtOptions.Issuer,
+            audience: jwtOptions.Audience,
             claims: claims,
             expires: DateTime.UtcNow.AddHours(24),
             signingCredentials: credentials);

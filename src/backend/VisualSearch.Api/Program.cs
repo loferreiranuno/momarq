@@ -5,6 +5,7 @@ using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using Npgsql;
 using Pgvector.Npgsql;
+using VisualSearch.Api;
 using VisualSearch.Api.Data;
 using VisualSearch.Api.Endpoints;
 using VisualSearch.Api.Services;
@@ -15,6 +16,9 @@ NpgsqlConnection.GlobalTypeMapper.UseVector();
 #pragma warning restore CS0618
 
 var builder = WebApplication.CreateBuilder(args);
+
+var jwtOptions = JwtOptions.Create(builder.Configuration);
+builder.Services.AddSingleton(jwtOptions);
 
 // ========== Services Configuration ==========
 
@@ -51,10 +55,6 @@ builder.Services.AddHttpClient();
 builder.Services.AddHostedService<SeedDataService>();
 
 // Configure JWT authentication
-var jwtKey = builder.Configuration["Jwt:Key"] ?? "VisualSearch-Default-JWT-Key-Change-In-Production-2024!";
-var jwtIssuer = builder.Configuration["Jwt:Issuer"] ?? "VisualSearch.Api";
-var jwtAudience = builder.Configuration["Jwt:Audience"] ?? "VisualSearch.Frontend";
-
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
@@ -64,9 +64,9 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ValidateAudience = true,
             ValidateLifetime = true,
             ValidateIssuerSigningKey = true,
-            ValidIssuer = jwtIssuer,
-            ValidAudience = jwtAudience,
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey))
+            ValidIssuer = jwtOptions.Issuer,
+            ValidAudience = jwtOptions.Audience,
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtOptions.Key))
         };
     });
 
