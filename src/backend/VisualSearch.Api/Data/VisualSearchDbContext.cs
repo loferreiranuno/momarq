@@ -160,6 +160,10 @@ public class VisualSearchDbContext : DbContext
                 .HasMaxLength(1024)
                 .IsRequired();
 
+            entity.Property(e => e.LocalPath)
+                .HasColumnName("local_path")
+                .HasMaxLength(500);
+
             entity.Property(e => e.Embedding)
                 .HasColumnName("embedding")
                 .HasColumnType("vector(512)");

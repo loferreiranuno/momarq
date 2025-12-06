@@ -45,11 +45,27 @@ builder.Services.AddMemoryCache();
 // Add CLIP embedding service (singleton for model reuse)
 builder.Services.AddSingleton<ClipEmbeddingService>();
 
+// Add object detection service (YOLO for furniture detection)
+builder.Services.AddSingleton<ObjectDetectionService>();
+
+// Add image upload service (handles file storage with resize/compression)
+builder.Services.AddSingleton<ImageUploadService>();
+
+// Add vectorization service (facade combining CLIP + YOLO + local file reading)
+builder.Services.AddSingleton<VectorizationService>();
+
 // Add settings service (singleton for SSE connections)
 builder.Services.AddSingleton<SettingsService>();
 
 // Add HTTP client factory for downloading images
 builder.Services.AddHttpClient();
+
+// Add named HTTP client for image download with SSL bypass (for problematic external URLs)
+builder.Services.AddHttpClient("ImageDownload")
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+    {
+        ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+    });
 
 // Add seed data service (runs on startup)
 builder.Services.AddHostedService<SeedDataService>();

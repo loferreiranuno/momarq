@@ -15,6 +15,9 @@ public sealed class ClipEmbeddingService : IDisposable
     private readonly InferenceSession? _session;
     private readonly ILogger<ClipEmbeddingService> _logger;
     private readonly bool _isModelLoaded;
+    private readonly string? _inputName;
+    private readonly string? _outputName;
+    private readonly int _embeddingDimension = 512;
 
     // CLIP ViT-B/32 image preprocessing constants
     private const int ImageSize = 224;
@@ -36,6 +39,9 @@ public sealed class ClipEmbeddingService : IDisposable
         {
             try
             {
+                var fileInfo = new FileInfo(modelPath);
+                _logger.LogInformation("Found CLIP model file at {ModelPath}, size: {Size} bytes", modelPath, fileInfo.Length);
+
                 var sessionOptions = new Microsoft.ML.OnnxRuntime.SessionOptions
                 {
                     GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL,
@@ -44,8 +50,30 @@ public sealed class ClipEmbeddingService : IDisposable
                 };
 
                 _session = new InferenceSession(modelPath, sessionOptions);
+
+                // Detect input/output names from the model
+                _inputName = _session.InputMetadata.Keys.FirstOrDefault() ?? "pixel_values";
+                _outputName = _session.OutputMetadata.Keys.FirstOrDefault() ?? "image_embeds";
+
+                // Try to determine embedding dimension from output metadata
+                var outputMeta = _session.OutputMetadata.Values.FirstOrDefault();
+                if (outputMeta?.Dimensions is { Length: >= 2 })
+                {
+                    var lastDim = outputMeta.Dimensions[^1];
+                    if (lastDim > 0)
+                    {
+                        _embeddingDimension = lastDim;
+                    }
+                }
+
                 _isModelLoaded = true;
-                _logger.LogInformation("CLIP model loaded successfully from {ModelPath}", modelPath);
+                _logger.LogInformation(
+                    "CLIP model loaded successfully from {ModelPath}. Input: {Input}, Output: {Output}, Embedding dim: {Dim}",
+                    modelPath, _inputName, _outputName, _embeddingDimension);
+
+                // Log all input/output names for debugging
+                _logger.LogDebug("Model inputs: {Inputs}", string.Join(", ", _session.InputMetadata.Keys));
+                _logger.LogDebug("Model outputs: {Outputs}", string.Join(", ", _session.OutputMetadata.Keys));
             }
             catch (Exception ex)
             {
@@ -73,7 +101,7 @@ public sealed class ClipEmbeddingService : IDisposable
     /// <returns>A normalized 512-dimensional embedding vector, or null if the model is not loaded.</returns>
     public async Task<float[]?> GenerateEmbeddingAsync(byte[] imageBytes, CancellationToken cancellationToken = default)
     {
-        if (!_isModelLoaded || _session is null)
+        if (!_isModelLoaded || _session is null || _inputName is null || _outputName is null)
         {
             _logger.LogWarning("CLIP model not loaded, cannot generate embedding.");
             return null;
@@ -85,20 +113,44 @@ public sealed class ClipEmbeddingService : IDisposable
             using var image = await Image.LoadAsync<Rgb24>(new MemoryStream(imageBytes), cancellationToken);
             var tensor = PreprocessImage(image);
 
-            // Run inference
+            // Run inference with detected input name
             var inputs = new List<NamedOnnxValue>
             {
-                NamedOnnxValue.CreateFromTensor("pixel_values", tensor)
+                NamedOnnxValue.CreateFromTensor(_inputName, tensor)
             };
 
             using var results = _session.Run(inputs);
-            var output = results.First().AsTensor<float>();
 
-            // Extract and normalize embedding
-            var embedding = new float[512];
-            for (int i = 0; i < 512; i++)
+            // Find output by detected name
+            var outputResult = results.FirstOrDefault(r => r.Name == _outputName) ?? results.First();
+            var output = outputResult.AsTensor<float>();
+
+            // Extract embedding - handle both [1, dim] and [dim] shapes
+            var embedding = new float[_embeddingDimension];
+            var shape = output.Dimensions.ToArray();
+
+            if (shape.Length == 2)
             {
-                embedding[i] = output[0, i];
+                // Shape [1, embedding_dim]
+                for (int i = 0; i < _embeddingDimension && i < shape[1]; i++)
+                {
+                    embedding[i] = output[0, i];
+                }
+            }
+            else if (shape.Length == 1)
+            {
+                // Shape [embedding_dim]
+                for (int i = 0; i < _embeddingDimension && i < shape[0]; i++)
+                {
+                    embedding[i] = output[i];
+                }
+            }
+            else
+            {
+                _logger.LogWarning("Unexpected output tensor shape: {Shape}", string.Join("x", shape));
+                // Try to flatten and take first N values
+                var flatOutput = output.ToArray();
+                Array.Copy(flatOutput, embedding, Math.Min(flatOutput.Length, _embeddingDimension));
             }
 
             NormalizeVector(embedding);

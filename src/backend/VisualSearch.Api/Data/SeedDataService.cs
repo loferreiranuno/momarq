@@ -1,12 +1,11 @@
 using Microsoft.EntityFrameworkCore;
-using Pgvector;
 using VisualSearch.Api.Data.Entities;
 
 namespace VisualSearch.Api.Data;
 
 /// <summary>
 /// Background service that seeds the database with initial data on first startup.
-/// Creates sample providers, products, and product images with random embeddings.
+/// Creates sample providers, products, and product images with CLIP embeddings.
 /// </summary>
 public class SeedDataService : IHostedService
 {
@@ -55,7 +54,7 @@ public class SeedDataService : IHostedService
         // This is necessary because the vector extension is created during migration
         await dbContext.Database.OpenConnectionAsync(cancellationToken);
         var connection = dbContext.Database.GetDbConnection() as Npgsql.NpgsqlConnection;
-        if (connection != null)
+        if (connection is not null)
         {
             await connection.ReloadTypesAsync();
         }
@@ -76,10 +75,10 @@ public class SeedDataService : IHostedService
         }
 
         _logger.LogInformation("Seeding database with initial data...");
+        
         await SeedSettingsAsync(dbContext, cancellationToken);
         await SeedAdminUserAsync(dbContext, cancellationToken);
         await SeedProvidersAsync(dbContext, cancellationToken);
-        await SeedProductsAsync(dbContext, cancellationToken);
 
         _logger.LogInformation("Database seeding completed.");
     }
@@ -188,19 +187,16 @@ public class SeedDataService : IHostedService
             new()
             {
                 Name = "Zara Home",
-                LogoUrl = "https://upload.wikimedia.org/wikipedia/commons/thumb/f/fd/Zara_Logo.svg/200px-Zara_Logo.svg.png",
                 WebsiteUrl = "https://www.zarahome.com"
             },
             new()
             {
                 Name = "IKEA",
-                LogoUrl = "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c5/Ikea_logo.svg/200px-Ikea_logo.svg.png",
                 WebsiteUrl = "https://www.ikea.com"
             },
             new()
             {
                 Name = "H&M Home",
-                LogoUrl = "https://upload.wikimedia.org/wikipedia/commons/thumb/5/53/H%26M-Logo.svg/200px-H%26M-Logo.svg.png",
                 WebsiteUrl = "https://www.hm.com/home"
             }
         };
@@ -209,109 +205,4 @@ public class SeedDataService : IHostedService
         await dbContext.SaveChangesAsync(cancellationToken);
     }
 
-    private static async Task SeedProductsAsync(VisualSearchDbContext dbContext, CancellationToken cancellationToken)
-    {
-        var providers = await dbContext.Providers.ToListAsync(cancellationToken);
-        var random = new Random(42); // Fixed seed for reproducibility
-
-        var categories = new[]
-        {
-            "sofa", "bed", "chair", "table", "lamp", "plant", "rug", "shelf", "tv", "pillow",
-            "mirror", "vase", "curtain", "blanket", "desk", "bookshelf", "armchair", "ottoman",
-            "nightstand", "dresser"
-        };
-
-        var adjectives = new[]
-        {
-            "Modern", "Classic", "Minimalist", "Rustic", "Elegant", "Cozy", "Scandinavian",
-            "Industrial", "Bohemian", "Contemporary", "Vintage", "Luxurious"
-        };
-
-        var materials = new[]
-        {
-            "Wood", "Metal", "Fabric", "Leather", "Velvet", "Rattan", "Glass", "Ceramic",
-            "Cotton", "Linen", "Wool", "Marble"
-        };
-
-        var products = new List<Product>();
-        var productImages = new List<ProductImage>();
-
-        // Generate 100 products across all providers
-        for (int i = 1; i <= 100; i++)
-        {
-            var provider = providers[random.Next(providers.Count)];
-            var category = categories[random.Next(categories.Length)];
-            var adjective = adjectives[random.Next(adjectives.Length)];
-            var material = materials[random.Next(materials.Length)];
-
-            var product = new Product
-            {
-                ProviderId = provider.Id,
-                ExternalId = $"{provider.Name[..2].ToUpperInvariant()}-{i:D5}",
-                Name = $"{adjective} {material} {char.ToUpperInvariant(category[0])}{category[1..]}",
-                Description = $"A beautiful {adjective.ToLowerInvariant()} {category} made from high-quality {material.ToLowerInvariant()}. Perfect for any modern home.",
-                Price = Math.Round((decimal)(random.NextDouble() * 500 + 29.99), 2),
-                Currency = "EUR",
-                Category = category,
-                ProductUrl = $"{provider.WebsiteUrl}/product/{i}"
-            };
-
-            products.Add(product);
-        }
-
-        dbContext.Products.AddRange(products);
-        await dbContext.SaveChangesAsync(cancellationToken);
-
-        // Generate 1-3 images per product with random normalized embeddings
-        foreach (var product in products)
-        {
-            var imageCount = random.Next(1, 4);
-
-            for (int j = 0; j < imageCount; j++)
-            {
-                var embedding = GenerateRandomNormalizedEmbedding(random);
-
-                var productImage = new ProductImage
-                {
-                    ProductId = product.Id,
-                    ImageUrl = $"https://picsum.photos/seed/{product.Id}-{j}/400/400",
-                    Embedding = new Vector(embedding),
-                    IsPrimary = j == 0
-                };
-
-                productImages.Add(productImage);
-            }
-        }
-
-        dbContext.ProductImages.AddRange(productImages);
-        await dbContext.SaveChangesAsync(cancellationToken);
-    }
-
-    /// <summary>
-    /// Generates a random 512-dimensional unit vector (L2-normalized).
-    /// </summary>
-    private static float[] GenerateRandomNormalizedEmbedding(Random random)
-    {
-        var embedding = new float[512];
-        float sumSquares = 0;
-
-        for (int i = 0; i < 512; i++)
-        {
-            // Generate random values from normal distribution using Box-Muller transform
-            var u1 = random.NextDouble();
-            var u2 = random.NextDouble();
-            var z = (float)(Math.Sqrt(-2.0 * Math.Log(u1)) * Math.Cos(2.0 * Math.PI * u2));
-            embedding[i] = z;
-            sumSquares += z * z;
-        }
-
-        // L2 normalize to unit vector
-        var magnitude = (float)Math.Sqrt(sumSquares);
-        for (int i = 0; i < 512; i++)
-        {
-            embedding[i] /= magnitude;
-        }
-
-        return embedding;
-    }
 }

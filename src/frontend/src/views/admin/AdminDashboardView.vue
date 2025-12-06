@@ -3,11 +3,20 @@ import { ref, onMounted } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
 import { api } from '@/api/client'
 
+interface ApiStats {
+  products: number
+  providers: number
+  images: number
+  vectorizedImages: number
+  vectorizationProgress: number
+}
+
 interface Stats {
   totalProducts: number
   totalProviders: number
   totalImages: number
-  recentSearches: number
+  vectorizedImages: number
+  vectorizationProgress: number
 }
 
 const settingsStore = useSettingsStore()
@@ -16,13 +25,21 @@ const stats = ref<Stats>({
   totalProducts: 0,
   totalProviders: 0,
   totalImages: 0,
-  recentSearches: 0,
+  vectorizedImages: 0,
+  vectorizationProgress: 0,
 })
 const isLoading = ref(true)
 
 onMounted(async () => {
   try {
-    stats.value = await api.get<Stats>('/api/admin/stats')
+    const response = await api.get<ApiStats>('/api/admin/stats')
+    stats.value = {
+      totalProducts: response?.products ?? 0,
+      totalProviders: response?.providers ?? 0,
+      totalImages: response?.images ?? 0,
+      vectorizedImages: response?.vectorizedImages ?? 0,
+      vectorizationProgress: response?.vectorizationProgress ?? 0,
+    }
   } catch (e) {
     console.error('Failed to load stats:', e)
   } finally {
@@ -32,7 +49,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="admin-dashboard">
+  <div class="admin-dashboard"> 
     <header class="admin-dashboard__header">
       <h1 class="page-title">Dashboard</h1>
       <p class="admin-dashboard__subtitle">Welcome to the Visual Search admin panel</p>
@@ -72,8 +89,8 @@ onMounted(async () => {
         <div class="stat-card card">
           <span class="stat-card__icon">🔍</span>
           <div class="stat-card__content">
-            <span class="stat-card__value">{{ stats.recentSearches.toLocaleString() }}</span>
-            <span class="stat-card__label">Recent Searches</span>
+            <span class="stat-card__value">{{ stats.vectorizedImages.toLocaleString() }}</span>
+            <span class="stat-card__label">Vectorized</span>
           </div>
         </div>
       </section>
@@ -108,6 +125,18 @@ onMounted(async () => {
       <section class="admin-dashboard__actions">
         <h2 class="section-title">Quick Actions</h2>
         <div class="actions-grid">
+          <router-link to="/admin/providers" class="action-card card card--hoverable">
+            <span class="action-card__icon">🏪</span>
+            <h3 class="action-card__title">Providers</h3>
+            <p class="action-card__description">Manage product providers</p>
+          </router-link>
+
+          <router-link to="/admin/products" class="action-card card card--hoverable">
+            <span class="action-card__icon">📦</span>
+            <h3 class="action-card__title">Products</h3>
+            <p class="action-card__description">Manage products and images</p>
+          </router-link>
+
           <router-link to="/admin/settings" class="action-card card card--hoverable">
             <span class="action-card__icon">⚙️</span>
             <h3 class="action-card__title">Settings</h3>

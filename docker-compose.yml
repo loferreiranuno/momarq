@@ -32,6 +32,9 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       - ConnectionStrings__DefaultConnection=Host=postgres;Database=visualsearch;Username=vsuser;Password=vspassword123
+      - Uploads__Path=/app/uploads
+    volumes:
+      - uploads_data:/app/uploads
     depends_on:
       postgres:
         condition: service_healthy
@@ -39,8 +42,14 @@ services:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 -O - http://localhost:8080/health > /dev/null || exit 1"]
       interval: 30s
       timeout: 10s
-      retries: 3
-      start_period: 60s
+      retries: 5
+      start_period: 120s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
     restart: unless-stopped
     networks:
       - visualsearch-network
@@ -55,6 +64,8 @@ services:
     container_name: visualsearch-nginx
     ports:
       - "3000:80"
+    volumes:
+      - uploads_data:/app/uploads:ro
     depends_on:
       api:
         condition: service_healthy
@@ -70,6 +81,8 @@ services:
 volumes:
   postgres_data:
     name: visualsearch-postgres-data
+  uploads_data:
+    name: visualsearch-uploads-data
 
 networks:
   visualsearch-network:

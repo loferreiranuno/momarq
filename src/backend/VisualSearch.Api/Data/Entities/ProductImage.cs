@@ -23,9 +23,15 @@ public class ProductImage
     public Product? Product { get; set; }
 
     /// <summary>
-    /// Gets or sets the URL to the image.
+    /// Gets or sets the URL to the image (external URL or local URL path).
     /// </summary>
     public required string ImageUrl { get; set; }
+
+    /// <summary>
+    /// Gets or sets the local file path (relative to uploads folder).
+    /// When set, the image is stored locally and ImageUrl points to the local serve path.
+    /// </summary>
+    public string? LocalPath { get; set; }
 
     /// <summary>
     /// Gets or sets the CLIP embedding vector (512 dimensions) for similarity search.

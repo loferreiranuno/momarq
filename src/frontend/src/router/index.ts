@@ -51,6 +51,30 @@ const routes: RouteRecordRaw[] = [
     meta: { title: 'Settings', requiresAuth: true },
   },
   {
+    path: '/admin/providers',
+    name: 'admin-providers',
+    component: () => import('@/views/admin/AdminProvidersView.vue'),
+    meta: { title: 'Providers', requiresAuth: true },
+  },
+  {
+    path: '/admin/products',
+    name: 'admin-products',
+    component: () => import('@/views/admin/AdminProductsView.vue'),
+    meta: { title: 'Products', requiresAuth: true },
+  },
+  {
+    path: '/admin/products/new',
+    name: 'admin-product-new',
+    component: () => import('@/views/admin/AdminProductFormView.vue'),
+    meta: { title: 'New Product', requiresAuth: true },
+  },
+  {
+    path: '/admin/products/:id/edit',
+    name: 'admin-product-edit',
+    component: () => import('@/views/admin/AdminProductFormView.vue'),
+    meta: { title: 'Edit Product', requiresAuth: true },
+  },
+  {
     path: '/:pathMatch(.*)*',
     name: 'not-found',
     component: () => import('@/views/NotFoundView.vue'),
