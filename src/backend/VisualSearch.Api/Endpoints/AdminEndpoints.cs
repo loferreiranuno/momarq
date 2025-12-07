@@ -403,7 +403,7 @@ public static class AdminEndpoints
         await dbContext.SaveChangesAsync(cancellationToken);
 
         // Refresh detection service cache
-        detectionService.RefreshEnabledCategories();
+        await detectionService.RefreshEnabledCategoriesAsync(cancellationToken);
 
         return Results.Created($"/api/admin/categories/{category.Id}", new CategoryDto
         {
@@ -464,7 +464,7 @@ public static class AdminEndpoints
         await dbContext.SaveChangesAsync(cancellationToken);
 
         // Refresh detection service cache
-        detectionService.RefreshEnabledCategories();
+        await detectionService.RefreshEnabledCategoriesAsync(cancellationToken);
 
         return Results.Ok(new CategoryDto
         {
@@ -524,7 +524,7 @@ public static class AdminEndpoints
         await dbContext.SaveChangesAsync(cancellationToken);
 
         // Refresh detection service cache
-        detectionService.RefreshEnabledCategories();
+        await detectionService.RefreshEnabledCategoriesAsync(cancellationToken);
 
         return Results.Ok(new CategoryDto
         {

@@ -1,9 +1,11 @@
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
-using VisualSearch.Api.Data;
+using VisualSearch.Api.Domain.Interfaces;
 
 namespace VisualSearch.Api.Services;
 
@@ -16,19 +18,16 @@ public sealed class ObjectDetectionService : IDisposable
     private readonly InferenceSession? _session;
     private readonly ILogger<ObjectDetectionService> _logger;
     private readonly IServiceProvider _serviceProvider;
+    private readonly YoloSettings _settings;
     private readonly bool _isModelLoaded;
+    private readonly object _sessionLock = new();
+    private readonly SemaphoreSlim _cacheLock = new(1, 1);
     private HashSet<int>? _enabledClassIds;
     private DateTime _lastCacheRefresh = DateTime.MinValue;
     private static readonly TimeSpan CacheExpiration = TimeSpan.FromMinutes(5);
 
     // YOLOv8 input size
     private const int InputSize = 640;
-    
-    // Confidence threshold for detections
-    private const float ConfidenceThreshold = 0.25f;
-    
-    // IoU threshold for NMS
-    private const float IouThreshold = 0.45f;
 
     // COCO class names
     private static readonly string[] CocoClasses =
@@ -51,23 +50,39 @@ public sealed class ObjectDetectionService : IDisposable
     public ObjectDetectionService(
         ILogger<ObjectDetectionService> logger,
         IWebHostEnvironment environment,
-        IServiceProvider serviceProvider)
+        IServiceProvider serviceProvider,
+        IOptions<ModelSettings> settings)
     {
         _logger = logger;
         _serviceProvider = serviceProvider;
+        _settings = settings.Value.Yolo;
 
-        var modelPath = Path.Combine(environment.ContentRootPath, "Models", "yolov8n.onnx");
+        var modelPath = Path.Combine(environment.ContentRootPath, "Models", "yolo-world-s.onnx");
 
         if (File.Exists(modelPath))
         {
             try
             {
+                // Optimized session options using configuration
+                var interOpThreads = _settings.InterOpNumThreads == 0 
+                    ? Environment.ProcessorCount 
+                    : _settings.InterOpNumThreads;
+                var intraOpThreads = _settings.IntraOpNumThreads == 0 
+                    ? Environment.ProcessorCount 
+                    : _settings.IntraOpNumThreads;
+
                 var sessionOptions = new Microsoft.ML.OnnxRuntime.SessionOptions
                 {
                     GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL,
-                    InterOpNumThreads = 2,
-                    IntraOpNumThreads = 2
+                    InterOpNumThreads = interOpThreads,
+                    IntraOpNumThreads = intraOpThreads,
+                    EnableMemoryPattern = _settings.EnableMemoryPattern,
+                    EnableCpuMemArena = _settings.EnableCpuMemArena
                 };
+
+                _logger.LogInformation(
+                    "YOLO ONNX session options: InterOp={InterOp}, IntraOp={IntraOp}, MemPattern={MemPattern}, CpuArena={CpuArena}",
+                    interOpThreads, intraOpThreads, _settings.EnableMemoryPattern, _settings.EnableCpuMemArena);
 
                 _session = new InferenceSession(modelPath, sessionOptions);
                 _isModelLoaded = true;
@@ -92,22 +107,28 @@ public sealed class ObjectDetectionService : IDisposable
     public bool IsModelLoaded => _isModelLoaded;
 
     /// <summary>
-    /// Refreshes the cache of enabled category class IDs from the database.
+    /// Refreshes the cache of enabled category class IDs from the database asynchronously.
     /// </summary>
-    public void RefreshEnabledCategories()
+    public async Task RefreshEnabledCategoriesAsync(CancellationToken cancellationToken = default)
     {
         try
         {
-            using var scope = _serviceProvider.CreateScope();
-            var dbContext = scope.ServiceProvider.GetRequiredService<VisualSearchDbContext>();
-            
-            _enabledClassIds = dbContext.Categories
-                .Where(c => c.DetectionEnabled)
-                .Select(c => c.CocoClassId)
-                .ToHashSet();
-            
-            _lastCacheRefresh = DateTime.UtcNow;
-            _logger.LogInformation("Refreshed enabled categories cache with {Count} class IDs", _enabledClassIds.Count);
+            await _cacheLock.WaitAsync(cancellationToken);
+            try
+            {
+                // Create a scope to get the scoped repository
+                using var scope = _serviceProvider.CreateScope();
+                var categoryRepository = scope.ServiceProvider.GetRequiredService<ICategoryRepository>();
+                
+                var enabledCategories = await categoryRepository.GetEnabledForDetectionAsync(cancellationToken);
+                _enabledClassIds = enabledCategories.Select(c => c.CocoClassId).ToHashSet();
+                _lastCacheRefresh = DateTime.UtcNow;
+                _logger.LogInformation("Refreshed enabled categories cache with {Count} class IDs", _enabledClassIds.Count);
+            }
+            finally
+            {
+                _cacheLock.Release();
+            }
         }
         catch (Exception ex)
         {
@@ -118,11 +139,11 @@ public sealed class ObjectDetectionService : IDisposable
     /// <summary>
     /// Gets the enabled class IDs, refreshing the cache if needed.
     /// </summary>
-    private HashSet<int> GetEnabledClassIds()
+    private async Task<HashSet<int>> GetEnabledClassIdsAsync(CancellationToken cancellationToken = default)
     {
         if (_enabledClassIds is null || DateTime.UtcNow - _lastCacheRefresh > CacheExpiration)
         {
-            RefreshEnabledCategories();
+            await RefreshEnabledCategoriesAsync(cancellationToken);
         }
 
         return _enabledClassIds ?? [];
@@ -136,14 +157,26 @@ public sealed class ObjectDetectionService : IDisposable
     /// <returns>A list of detected objects with their bounding boxes and class names.</returns>
     public async Task<List<DetectedObject>> DetectObjectsAsync(byte[] imageBytes, CancellationToken cancellationToken = default)
     {
+        using var image = Image.Load<Rgb24>(imageBytes);
+        return await DetectObjectsAsync(image, cancellationToken);
+    }
+
+    /// <summary>
+    /// Detects objects in an image and returns bounding boxes for furniture items.
+    /// </summary>
+    /// <param name="image">The image to process.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A list of detected objects with their bounding boxes and class names.</returns>
+    public async Task<List<DetectedObject>> DetectObjectsAsync(Image<Rgb24> image, CancellationToken cancellationToken = default)
+    {
         if (!_isModelLoaded || _session is null)
         {
             _logger.LogDebug("YOLO model not loaded, returning empty detections.");
             return [];
         }
 
-        // Get enabled class IDs from database (cached)
-        var enabledClassIds = GetEnabledClassIds();
+        // Get enabled class IDs from database (cached) - async to avoid blocking
+        var enabledClassIds = await GetEnabledClassIdsAsync(cancellationToken);
         
         if (enabledClassIds.Count == 0)
         {
@@ -152,14 +185,14 @@ public sealed class ObjectDetectionService : IDisposable
 
         try
         {
+            // Pass image directly to preprocessing - avoid clone since we resize a copy internally
             return await Task.Run(() =>
             {
-                using var image = Image.Load<Rgb24>(imageBytes);
                 var originalWidth = image.Width;
                 var originalHeight = image.Height;
 
-                // Preprocess image for YOLO
-                var tensor = PreprocessImage(image);
+                // Preprocess image for YOLO with parallel pixel processing
+                var tensor = PreprocessImageParallel(image);
 
                 // Run inference
                 var inputs = new List<NamedOnnxValue>
@@ -167,23 +200,30 @@ public sealed class ObjectDetectionService : IDisposable
                     NamedOnnxValue.CreateFromTensor("images", tensor)
                 };
 
-                using var results = _session.Run(inputs);
-                var output = results.First().AsTensor<float>();
+                IDisposableReadOnlyCollection<DisposableNamedOnnxValue> results;
+                lock (_sessionLock)
+                {
+                    results = _session!.Run(inputs);
+                }
 
-                // Parse detections
-                var detections = ParseDetections(output, originalWidth, originalHeight);
+                using (results)
+                {
+                    var output = results.First().AsTensor<float>();
 
-                // Apply NMS
-                var nmsDetections = ApplyNms(detections);
+                    // Parse detections using configurable threshold
+                    var detections = ParseDetections(output, originalWidth, originalHeight, _settings.ConfidenceThreshold);
 
-                // Filter to enabled furniture classes only (from database)
-                var furnitureDetections = enabledClassIds.Count > 0
-                    ? nmsDetections.Where(d => enabledClassIds.Contains(d.ClassId)).ToList()
-                    : nmsDetections;
+                    // Apply NMS with configurable IoU threshold
+                    var nmsDetections = ApplyNms(detections, _settings.IouThreshold);
 
-                _logger.LogInformation("Detected {Count} furniture objects in image", furnitureDetections.Count);
-                return furnitureDetections;
+                    // Filter to enabled furniture classes only (from database)
+                    var furnitureDetections = enabledClassIds.Count > 0
+                        ? nmsDetections.Where(d => enabledClassIds.Contains(d.ClassId)).ToList()
+                        : nmsDetections;
 
+                    _logger.LogInformation("Detected {Count} furniture objects in image", furnitureDetections.Count);
+                    return furnitureDetections;
+                }
             }, cancellationToken);
         }
         catch (Exception ex)
@@ -202,9 +242,32 @@ public sealed class ObjectDetectionService : IDisposable
     /// <returns>A list of cropped image byte arrays.</returns>
     public List<byte[]> CropDetections(byte[] imageBytes, List<DetectedObject> detections, float padding = 0.1f)
     {
-        var crops = new List<byte[]>();
-
         using var image = Image.Load<Rgb24>(imageBytes);
+        var crops = CropDetections(image, detections, padding);
+        
+        var result = new List<byte[]>();
+        foreach (var crop in crops)
+        {
+            using (crop)
+            using (var ms = new MemoryStream())
+            {
+                crop.SaveAsJpeg(ms);
+                result.Add(ms.ToArray());
+            }
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Crops detected regions from an image.
+    /// </summary>
+    /// <param name="image">The original image.</param>
+    /// <param name="detections">The detected objects.</param>
+    /// <param name="padding">Padding to add around each crop (as a fraction of box size).</param>
+    /// <returns>A list of cropped images.</returns>
+    public List<Image<Rgb24>> CropDetections(Image<Rgb24> image, List<DetectedObject> detections, float padding = 0.1f)
+    {
+        var crops = new List<Image<Rgb24>>();
 
         foreach (var detection in detections)
         {
@@ -230,11 +293,8 @@ public sealed class ObjectDetectionService : IDisposable
                 }
 
                 // Clone and crop
-                using var crop = image.Clone(ctx => ctx.Crop(new Rectangle(x1, y1, cropWidth, cropHeight)));
-
-                using var ms = new MemoryStream();
-                crop.SaveAsJpeg(ms);
-                crops.Add(ms.ToArray());
+                var crop = image.Clone(ctx => ctx.Crop(new Rectangle(x1, y1, cropWidth, cropHeight)));
+                crops.Add(crop);
             }
             catch (Exception ex)
             {
@@ -246,49 +306,61 @@ public sealed class ObjectDetectionService : IDisposable
     }
 
     /// <summary>
-    /// Preprocesses an image for YOLOv8 inference.
+    /// Preprocesses an image for YOLOv8 inference with parallel pixel processing.
+    /// Creates a resized clone to avoid mutating the original image.
     /// </summary>
-    private static DenseTensor<float> PreprocessImage(Image<Rgb24> image)
+    private static DenseTensor<float> PreprocessImageParallel(Image<Rgb24> image)
     {
-        // Resize to 640x640 with letterboxing
+        // Resize to 640x640 with letterboxing - clone to avoid mutating original
         var scale = Math.Min((float)InputSize / image.Width, (float)InputSize / image.Height);
         var newWidth = (int)(image.Width * scale);
         var newHeight = (int)(image.Height * scale);
 
-        image.Mutate(x => x.Resize(newWidth, newHeight));
+        using var resized = image.Clone(x => x.Resize(newWidth, newHeight));
 
         // Create tensor with padding (letterbox)
         var tensor = new DenseTensor<float>([1, 3, InputSize, InputSize]);
 
-        // Fill with gray (114/255)
-        for (int c = 0; c < 3; c++)
+        // Calculate offset for centering
+        var offsetX = (InputSize - newWidth) / 2;
+        var offsetY = (InputSize - newHeight) / 2;
+
+        // Fill with gray (114/255) using parallel processing
+        Parallel.For(0, InputSize, y =>
         {
-            for (int y = 0; y < InputSize; y++)
+            for (int c = 0; c < 3; c++)
             {
                 for (int x = 0; x < InputSize; x++)
                 {
                     tensor[0, c, y, x] = 114f / 255f;
                 }
             }
-        }
+        });
 
-        // Calculate offset for centering
-        var offsetX = (InputSize - newWidth) / 2;
-        var offsetY = (InputSize - newHeight) / 2;
-
-        // Copy image pixels
-        image.ProcessPixelRows(accessor =>
+        // Copy image pixels with parallel row processing
+        // First, extract pixel data to array for parallel access
+        var pixelData = new Rgb24[newHeight * newWidth];
+        resized.ProcessPixelRows(accessor =>
         {
             for (int y = 0; y < accessor.Height; y++)
             {
                 var row = accessor.GetRowSpan(y);
                 for (int x = 0; x < row.Length; x++)
                 {
-                    var pixel = row[x];
-                    tensor[0, 0, y + offsetY, x + offsetX] = pixel.R / 255f;
-                    tensor[0, 1, y + offsetY, x + offsetX] = pixel.G / 255f;
-                    tensor[0, 2, y + offsetY, x + offsetX] = pixel.B / 255f;
+                    pixelData[y * newWidth + x] = row[x];
                 }
+            }
+        });
+
+        // Now process in parallel
+        Parallel.For(0, newHeight, y =>
+        {
+            for (int x = 0; x < newWidth; x++)
+            {
+                var pixel = pixelData[y * newWidth + x];
+                tensor[0, 0, y + offsetY, x + offsetX] = pixel.R / 255f;
+                tensor[0, 1, y + offsetY, x + offsetX] = pixel.G / 255f;
+                tensor[0, 2, y + offsetY, x + offsetX] = pixel.B / 255f;
             }
         });
 
@@ -298,7 +370,12 @@ public sealed class ObjectDetectionService : IDisposable
     /// <summary>
     /// Parses YOLO output tensor into detection objects.
     /// </summary>
-    private List<DetectedObject> ParseDetections(Tensor<float> output, int originalWidth, int originalHeight)
+    /// <param name="output">The YOLO output tensor.</param>
+    /// <param name="originalWidth">Original image width.</param>
+    /// <param name="originalHeight">Original image height.</param>
+    /// <param name="confidenceThreshold">Minimum confidence threshold for detections.</param>
+    /// <returns>List of detected objects.</returns>
+    private List<DetectedObject> ParseDetections(Tensor<float> output, int originalWidth, int originalHeight, float confidenceThreshold)
     {
         var detections = new List<DetectedObject>();
         
@@ -332,7 +409,7 @@ public sealed class ObjectDetectionService : IDisposable
                 }
             }
 
-            if (maxScore < ConfidenceThreshold)
+            if (maxScore < confidenceThreshold)
             {
                 continue;
             }
@@ -367,7 +444,10 @@ public sealed class ObjectDetectionService : IDisposable
     /// <summary>
     /// Applies Non-Maximum Suppression to filter overlapping detections.
     /// </summary>
-    private List<DetectedObject> ApplyNms(List<DetectedObject> detections)
+    /// <param name="detections">The list of detections to filter.</param>
+    /// <param name="iouThreshold">The IoU threshold for filtering overlapping boxes.</param>
+    /// <returns>Filtered list of detections.</returns>
+    private static List<DetectedObject> ApplyNms(List<DetectedObject> detections, float iouThreshold)
     {
         var result = new List<DetectedObject>();
         var sorted = detections.OrderByDescending(d => d.Confidence).ToList();
@@ -378,7 +458,7 @@ public sealed class ObjectDetectionService : IDisposable
             result.Add(best);
             sorted.RemoveAt(0);
 
-            sorted = sorted.Where(d => CalculateIou(best, d) < IouThreshold).ToList();
+            sorted = sorted.Where(d => CalculateIou(best, d) < iouThreshold).ToList();
         }
 
         return result;
@@ -406,6 +486,7 @@ public sealed class ObjectDetectionService : IDisposable
     public void Dispose()
     {
         _session?.Dispose();
+        _cacheLock.Dispose();
     }
 }
 

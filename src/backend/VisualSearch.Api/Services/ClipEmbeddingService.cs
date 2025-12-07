@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Options;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
 using SixLabors.ImageSharp;
@@ -14,10 +15,12 @@ public sealed class ClipEmbeddingService : IDisposable
 {
     private readonly InferenceSession? _session;
     private readonly ILogger<ClipEmbeddingService> _logger;
+    private readonly ClipSettings _settings;
     private readonly bool _isModelLoaded;
     private readonly string? _inputName;
     private readonly string? _outputName;
     private readonly int _embeddingDimension = 768;
+    private readonly object _sessionLock = new();
 
     // CLIP ViT-L/14 image preprocessing constants
     private const int ImageSize = 224;
@@ -29,11 +32,15 @@ public sealed class ClipEmbeddingService : IDisposable
     /// </summary>
     /// <param name="logger">The logger instance.</param>
     /// <param name="environment">The hosting environment.</param>
-    public ClipEmbeddingService(ILogger<ClipEmbeddingService> logger, IWebHostEnvironment environment)
+    /// <param name="settings">The model settings.</param>
+    public ClipEmbeddingService(
+        ILogger<ClipEmbeddingService> logger, 
+        IWebHostEnvironment environment,
+        IOptions<ModelSettings> settings)
     {
         _logger = logger;
+        _settings = settings.Value.Clip;
 
-        // var modelPath = Path.Combine(environment.ContentRootPath, "Models", "clip-vit-base-patch32-visual.onnx");
         var modelPath = Path.Combine(environment.ContentRootPath, "Models", "clip-vit-large-patch14-visual.onnx");
         if (File.Exists(modelPath))
         {
@@ -42,12 +49,26 @@ public sealed class ClipEmbeddingService : IDisposable
                 var fileInfo = new FileInfo(modelPath);
                 _logger.LogInformation("Found CLIP model file at {ModelPath}, size: {Size} bytes", modelPath, fileInfo.Length);
 
+                // Optimized session options using configuration
+                var interOpThreads = _settings.InterOpNumThreads == 0 
+                    ? Environment.ProcessorCount 
+                    : _settings.InterOpNumThreads;
+                var intraOpThreads = _settings.IntraOpNumThreads == 0 
+                    ? Environment.ProcessorCount 
+                    : _settings.IntraOpNumThreads;
+
                 var sessionOptions = new Microsoft.ML.OnnxRuntime.SessionOptions
                 {
                     GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL,
-                    InterOpNumThreads = 4,
-                    IntraOpNumThreads = 4
+                    InterOpNumThreads = interOpThreads,
+                    IntraOpNumThreads = intraOpThreads,
+                    EnableMemoryPattern = _settings.EnableMemoryPattern,
+                    EnableCpuMemArena = _settings.EnableCpuMemArena
                 };
+
+                _logger.LogInformation(
+                    "CLIP ONNX session options: InterOp={InterOp}, IntraOp={IntraOp}, MemPattern={MemPattern}, CpuArena={CpuArena}",
+                    interOpThreads, intraOpThreads, _settings.EnableMemoryPattern, _settings.EnableCpuMemArena);
 
                 _session = new InferenceSession(modelPath, sessionOptions);
 
@@ -101,66 +122,225 @@ public sealed class ClipEmbeddingService : IDisposable
     /// <returns>A normalized 768-dimensional embedding vector, or null if the model is not loaded.</returns>
     public async Task<float[]?> GenerateEmbeddingAsync(byte[] imageBytes, CancellationToken cancellationToken = default)
     {
+        using var image = await Image.LoadAsync<Rgb24>(new MemoryStream(imageBytes), cancellationToken);
+        return await GenerateEmbeddingAsync(image, cancellationToken);
+    }
+
+    /// <summary>
+    /// Generates a 768-dimensional CLIP embedding from an image.
+    /// </summary>
+    /// <param name="image">The image to process.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A normalized 768-dimensional embedding vector, or null if the model is not loaded.</returns>
+    public Task<float[]?> GenerateEmbeddingAsync(Image<Rgb24> image, CancellationToken cancellationToken = default)
+    {
         if (!_isModelLoaded || _session is null || _inputName is null || _outputName is null)
         {
             _logger.LogWarning("CLIP model not loaded, cannot generate embedding.");
-            return null;
+            return Task.FromResult<float[]?>(null);
         }
 
-        try
+        return Task.Run(() =>
         {
-            // Load and preprocess image
-            using var image = await Image.LoadAsync<Rgb24>(new MemoryStream(imageBytes), cancellationToken);
-            var tensor = PreprocessImage(image);
-
-            // Run inference with detected input name
-            var inputs = new List<NamedOnnxValue>
+            try
             {
-                NamedOnnxValue.CreateFromTensor(_inputName, tensor)
-            };
+                // Clone image because PreprocessImage mutates it (resizes)
+                using var clone = image.Clone();
+                
+                // Load and preprocess image
+                var tensor = PreprocessImage(clone);
 
-            using var results = _session.Run(inputs);
-
-            // Find output by detected name
-            var outputResult = results.FirstOrDefault(r => r.Name == _outputName) ?? results.First();
-            var output = outputResult.AsTensor<float>();
-
-            // Extract embedding - handle both [1, dim] and [dim] shapes
-            var embedding = new float[_embeddingDimension];
-            var shape = output.Dimensions.ToArray();
-
-            if (shape.Length == 2)
-            {
-                // Shape [1, embedding_dim]
-                for (int i = 0; i < _embeddingDimension && i < shape[1]; i++)
+                // Run inference with detected input name (thread-safe with lock)
+                var inputs = new List<NamedOnnxValue>
                 {
-                    embedding[i] = output[0, i];
+                    NamedOnnxValue.CreateFromTensor(_inputName, tensor)
+                };
+
+                IDisposableReadOnlyCollection<DisposableNamedOnnxValue> results;
+                lock (_sessionLock)
+                {
+                    results = _session!.Run(inputs);
+                }
+
+                using (results)
+                {
+                    // Find output by detected name
+                    var outputResult = results.FirstOrDefault(r => r.Name == _outputName) ?? results.First();
+                    var output = outputResult.AsTensor<float>();
+
+                    // Extract embedding - handle both [1, dim] and [dim] shapes
+                    var embedding = new float[_embeddingDimension];
+                    var shape = output.Dimensions.ToArray();
+
+                    if (shape.Length == 2)
+                    {
+                        // Shape [1, embedding_dim]
+                        for (int i = 0; i < _embeddingDimension && i < shape[1]; i++)
+                        {
+                            embedding[i] = output[0, i];
+                        }
+                    }
+                    else if (shape.Length == 1)
+                    {
+                        // Shape [embedding_dim]
+                        for (int i = 0; i < _embeddingDimension && i < shape[0]; i++)
+                        {
+                            embedding[i] = output[i];
+                        }
+                    }
+                    else
+                    {
+                        _logger.LogWarning("Unexpected output tensor shape: {Shape}", string.Join("x", shape));
+                        // Try to flatten and take first N values
+                        var flatOutput = output.ToArray();
+                        Array.Copy(flatOutput, embedding, Math.Min(flatOutput.Length, _embeddingDimension));
+                    }
+
+                    NormalizeVector(embedding);
+                    return (float[]?)embedding;
                 }
             }
-            else if (shape.Length == 1)
+            catch (Exception ex)
             {
-                // Shape [embedding_dim]
-                for (int i = 0; i < _embeddingDimension && i < shape[0]; i++)
+                _logger.LogError(ex, "Failed to generate CLIP embedding.");
+                return null;
+            }
+        }, cancellationToken);
+    }
+
+    /// <summary>
+    /// Generates CLIP embeddings for multiple images in a batch.
+    /// This is more efficient than calling GenerateEmbeddingAsync multiple times.
+    /// </summary>
+    /// <param name="images">The images to process.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>An array of normalized embeddings (null entries for failed images).</returns>
+    public Task<float[]?[]> GenerateBatchEmbeddingsAsync(List<Image<Rgb24>> images, CancellationToken cancellationToken = default)
+    {
+        if (!_isModelLoaded || _session is null || _inputName is null || _outputName is null)
+        {
+            _logger.LogWarning("CLIP model not loaded, cannot generate batch embeddings.");
+            return Task.FromResult(new float[]?[images.Count]);
+        }
+
+        if (images.Count == 0)
+        {
+            return Task.FromResult(Array.Empty<float[]?>());
+        }
+
+        // For single image, use regular method
+        if (images.Count == 1)
+        {
+            return GenerateSingleAsBatchAsync(images[0], cancellationToken);
+        }
+
+        return Task.Run(() =>
+        {
+            var batchSize = Math.Min(images.Count, _settings.MaxBatchSize);
+            var results = new float[]?[images.Count];
+
+            try
+            {
+                // Process in batches
+                for (int batchStart = 0; batchStart < images.Count; batchStart += batchSize)
                 {
-                    embedding[i] = output[i];
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    var currentBatchSize = Math.Min(batchSize, images.Count - batchStart);
+                    var batchTensor = new DenseTensor<float>([currentBatchSize, 3, ImageSize, ImageSize]);
+
+                    // Preprocess images in parallel
+                    Parallel.For(0, currentBatchSize, i =>
+                    {
+                        var imageIndex = batchStart + i;
+                        try
+                        {
+                            using var clone = images[imageIndex].Clone();
+                            clone.Mutate(x => x.Resize(new ResizeOptions
+                            {
+                                Size = new Size(ImageSize, ImageSize),
+                                Mode = ResizeMode.Crop,
+                                Position = AnchorPositionMode.Center
+                            }));
+
+                            clone.ProcessPixelRows(accessor =>
+                            {
+                                for (int y = 0; y < ImageSize; y++)
+                                {
+                                    var row = accessor.GetRowSpan(y);
+                                    for (int x = 0; x < ImageSize; x++)
+                                    {
+                                        var pixel = row[x];
+                                        batchTensor[i, 0, y, x] = (pixel.R / 255f - Mean[0]) / Std[0];
+                                        batchTensor[i, 1, y, x] = (pixel.G / 255f - Mean[1]) / Std[1];
+                                        batchTensor[i, 2, y, x] = (pixel.B / 255f - Mean[2]) / Std[2];
+                                    }
+                                }
+                            });
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "Failed to preprocess image {Index} in batch", imageIndex);
+                        }
+                    });
+
+                    // Run batch inference
+                    var inputs = new List<NamedOnnxValue>
+                    {
+                        NamedOnnxValue.CreateFromTensor(_inputName, batchTensor)
+                    };
+
+                    IDisposableReadOnlyCollection<DisposableNamedOnnxValue> inferenceResults;
+                    lock (_sessionLock)
+                    {
+                        inferenceResults = _session!.Run(inputs);
+                    }
+
+                    using (inferenceResults)
+                    {
+                        var outputResult = inferenceResults.FirstOrDefault(r => r.Name == _outputName) ?? inferenceResults.First();
+                        var output = outputResult.AsTensor<float>();
+                        var shape = output.Dimensions.ToArray();
+
+                        // Extract embeddings from batch output [N, dim]
+                        for (int i = 0; i < currentBatchSize; i++)
+                        {
+                            var embedding = new float[_embeddingDimension];
+                            
+                            if (shape.Length == 2)
+                            {
+                                for (int j = 0; j < _embeddingDimension && j < shape[1]; j++)
+                                {
+                                    embedding[j] = output[i, j];
+                                }
+                            }
+                            else if (shape.Length == 1 && currentBatchSize == 1)
+                            {
+                                for (int j = 0; j < _embeddingDimension && j < shape[0]; j++)
+                                {
+                                    embedding[j] = output[j];
+                                }
+                            }
+
+                            NormalizeVector(embedding);
+                            results[batchStart + i] = embedding;
+                        }
+                    }
                 }
             }
-            else
+            catch (Exception ex)
             {
-                _logger.LogWarning("Unexpected output tensor shape: {Shape}", string.Join("x", shape));
-                // Try to flatten and take first N values
-                var flatOutput = output.ToArray();
-                Array.Copy(flatOutput, embedding, Math.Min(flatOutput.Length, _embeddingDimension));
+                _logger.LogError(ex, "Failed to generate batch CLIP embeddings");
             }
 
-            NormalizeVector(embedding);
-            return embedding;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to generate CLIP embedding.");
-            return null;
-        }
+            return results;
+        }, cancellationToken);
+    }
+
+    private async Task<float[]?[]> GenerateSingleAsBatchAsync(Image<Rgb24> image, CancellationToken cancellationToken)
+    {
+        var result = await GenerateEmbeddingAsync(image, cancellationToken);
+        return [result];
     }
 
     /// <summary>
@@ -248,12 +428,19 @@ public sealed class ClipEmbeddingService : IDisposable
     /// </summary>
     public async Task<float[]> GenerateFallbackEmbeddingAsync(byte[] imageBytes, CancellationToken cancellationToken = default)
     {
+        using var image = await Image.LoadAsync<Rgb24>(new MemoryStream(imageBytes), cancellationToken);
+        return GenerateFallbackEmbedding(image);
+    }
+
+    /// <summary>
+    /// Generates a simple color-histogram based pseudo-embedding when CLIP model is not available.
+    /// </summary>
+    public float[] GenerateFallbackEmbedding(Image<Rgb24> image)
+    {
         try
         {
-            using var image = await Image.LoadAsync<Rgb24>(new MemoryStream(imageBytes), cancellationToken);
-            
-            // Resize to small size for fast processing
-            image.Mutate(x => x.Resize(64, 64));
+            // Clone and resize to small size for fast processing
+            using var clone = image.Clone(x => x.Resize(64, 64));
 
             // Create embedding from color statistics using current dimension
             var embedding = new float[_embeddingDimension];
@@ -266,7 +453,7 @@ public sealed class ClipEmbeddingService : IDisposable
             int pixelCount = 0;
             float avgR = 0, avgG = 0, avgB = 0;
             
-            image.ProcessPixelRows(accessor =>
+            clone.ProcessPixelRows(accessor =>
             {
                 for (int y = 0; y < accessor.Height; y++)
                 {
@@ -303,12 +490,8 @@ public sealed class ClipEmbeddingService : IDisposable
             embedding[194] = avgB / 255f;
 
             // Fill remaining dimensions with hash-like values for variety
-            var hash = 0;
-            for (int i = 0; i < Math.Min(imageBytes.Length, 1000); i += 10)
-            {
-                hash = (hash * 31 + imageBytes[i]) % 10000;
-            }
-
+            // Since we don't have bytes, we use a simple hash of the first few pixels
+            var hash = (int)(avgR * avgG * avgB);
             var rng = new Random(hash);
             for (int i = 195; i < _embeddingDimension; i++)
             {

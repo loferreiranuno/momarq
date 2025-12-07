@@ -1,4 +1,6 @@
 using Pgvector;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.PixelFormats;
 using VisualSearch.Api.Data;
 using VisualSearch.Api.Data.Entities;
 
@@ -105,7 +107,7 @@ public sealed class VectorizationService
             var imageBytes = await _imageUploadService.ReadImageAsync(productImage.LocalPath, cancellationToken);
             if (imageBytes is null)
             {
-                _logger.LogWarning("Local file not found for product image {ImageId}: {LocalPath}", 
+                _logger.LogWarning("Local file not found for product image {ImageId}: {LocalPath}",
                     productImage.Id, productImage.LocalPath);
                 return false;
             }
@@ -127,8 +129,8 @@ public sealed class VectorizationService
         productImage.Embedding = new Vector(embedding);
         await dbContext.SaveChangesAsync(cancellationToken);
 
-        _logger.LogInformation("Vectorized product image {ImageId} (source: {Source})", 
-            productImage.Id, 
+        _logger.LogInformation("Vectorized product image {ImageId} (source: {Source})",
+            productImage.Id,
             string.IsNullOrWhiteSpace(productImage.LocalPath) ? "URL" : "local");
         return true;
     }
@@ -208,6 +210,7 @@ public sealed class VectorizationService
 
     /// <summary>
     /// Detects objects in an image and returns embeddings for each detected furniture item.
+    /// Uses batch embedding for optimal performance.
     /// </summary>
     /// <param name="imageBytes">The image bytes.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
@@ -217,36 +220,72 @@ public sealed class VectorizationService
         CancellationToken cancellationToken = default)
     {
         var results = new List<DetectedObjectWithEmbedding>();
+        var totalSw = System.Diagnostics.Stopwatch.StartNew();
+        var stageSw = System.Diagnostics.Stopwatch.StartNew();
+
+        // Decode image
+        using var image = Image.Load<Rgb24>(imageBytes);
+        var decodeTime = stageSw.ElapsedMilliseconds;
+        _logger.LogInformation("[TIMING] ImageDecode: {Time}ms ({Width}x{Height})", decodeTime, image.Width, image.Height);
 
         // If object detection is available, detect furniture items
         if (_detectionService.IsModelLoaded)
         {
-            var detections = await _detectionService.DetectObjectsAsync(imageBytes, cancellationToken);
+            stageSw.Restart();
+            var detections = await _detectionService.DetectObjectsAsync(image, cancellationToken);
+            var detectTime = stageSw.ElapsedMilliseconds;
+            _logger.LogInformation("[TIMING] YoloDetection: {Time}ms - Detected {Count} objects", detectTime, detections.Count);
 
             if (detections.Count > 0)
             {
-                var crops = _detectionService.CropDetections(imageBytes, detections);
+                stageSw.Restart();
+                var crops = _detectionService.CropDetections(image, detections);
+                var cropTime = stageSw.ElapsedMilliseconds;
+                _logger.LogInformation("[TIMING] CropDetections: {Time}ms - {Count} crops", cropTime, crops.Count);
 
-                for (int i = 0; i < detections.Count && i < crops.Count; i++)
+                long embedTime = 0;
+                try
                 {
-                    var embedding = await GenerateEmbeddingAsync(crops[i], cancellationToken);
-                    if (embedding is not null)
+                    // Use batch embedding for all crops - single inference call
+                    stageSw.Restart();
+                    var embeddings = await GenerateBatchEmbeddingsAsync(crops, cancellationToken);
+                    embedTime = stageSw.ElapsedMilliseconds;
+                    _logger.LogInformation("[TIMING] ClipBatchEmbedding: {Time}ms - {Count} embeddings", embedTime, embeddings.Count);
+
+                    for (int i = 0; i < Math.Min(embeddings.Count, detections.Count); i++)
                     {
-                        results.Add(new DetectedObjectWithEmbedding
+                        if (embeddings[i] is not null)
                         {
-                            Detection = detections[i],
-                            Embedding = embedding
-                        });
+                            results.Add(new DetectedObjectWithEmbedding
+                            {
+                                Detection = detections[i],
+                                Embedding = embeddings[i]!
+                            });
+                        }
+                    }
+                }
+                finally
+                {
+                    // Dispose all crops
+                    foreach (var crop in crops)
+                    {
+                        crop.Dispose();
                     }
                 }
 
-                _logger.LogInformation("Generated {Count} embeddings from detected objects", results.Count);
+                totalSw.Stop();
+                _logger.LogInformation("[TIMING] DetectAndEmbed total: {Time}ms | Decode={Decode}ms, Yolo={Yolo}ms, Crop={Crop}ms, Clip={Clip}ms",
+                    totalSw.ElapsedMilliseconds, decodeTime, detectTime, cropTime, embedTime);
                 return results;
             }
         }
 
         // Fallback: generate embedding for the full image
-        var fullImageEmbedding = await GenerateEmbeddingAsync(imageBytes, cancellationToken);
+        stageSw.Restart();
+        var fullImageEmbedding = await GenerateEmbeddingWithFallbackAsync(image, cancellationToken);
+        var fallbackTime = stageSw.ElapsedMilliseconds;
+        _logger.LogInformation("[TIMING] FallbackEmbedding: {Time}ms", fallbackTime);
+
         if (fullImageEmbedding is not null)
         {
             results.Add(new DetectedObjectWithEmbedding
@@ -257,6 +296,57 @@ public sealed class VectorizationService
         }
 
         return results;
+    }
+
+    /// <summary>
+    /// Generates embeddings for multiple images using batch inference.
+    /// </summary>
+    /// <param name="images">List of images to embed.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>List of embeddings (may contain nulls for failed images).</returns>
+    private async Task<List<float[]?>> GenerateBatchEmbeddingsAsync(
+        List<Image<Rgb24>> images,
+        CancellationToken cancellationToken)
+    {
+        if (!_clipService.IsModelLoaded || images.Count == 0)
+        {
+            // Fall back to individual processing with fallback embeddings
+            var fallbackResults = new List<float[]?>();
+            foreach (var img in images)
+            {
+                _logger.LogWarning("CLIP model not loaded, using fallback embedding for batch image");
+                fallbackResults.Add(_clipService.GenerateFallbackEmbedding(img));
+            }
+            return fallbackResults;
+        }
+
+        // Use batch inference for optimal performance
+        var batchResultsArray = await _clipService.GenerateBatchEmbeddingsAsync(images, cancellationToken);
+        var batchResults = batchResultsArray.ToList();
+
+        // Replace nulls with fallback embeddings
+        for (int i = 0; i < batchResults.Count; i++)
+        {
+            if (batchResults[i] is null)
+            {
+                _logger.LogWarning("Batch embedding returned null for image {Index}, using fallback embedding", i);
+                batchResults[i] = _clipService.GenerateFallbackEmbedding(images[i]);
+            }
+        }
+
+        return batchResults;
+    }
+
+    private async Task<float[]?> GenerateEmbeddingWithFallbackAsync(Image<Rgb24> image, CancellationToken cancellationToken)
+    {
+        if (!_clipService.IsModelLoaded)
+        {
+            _logger.LogWarning("CLIP model not loaded, using fallback embedding.");
+            return _clipService.GenerateFallbackEmbedding(image);
+        }
+
+        var embedding = await _clipService.GenerateEmbeddingAsync(image, cancellationToken);
+        return embedding ?? _clipService.GenerateFallbackEmbedding(image);
     }
 }
 
@@ -270,12 +360,12 @@ public sealed class DetectedObjectWithEmbedding
 
     /// <summary>Gets or sets the CLIP embedding for this object.</summary>
     public required float[] Embedding { get; set; }
-    
+
     /// <summary>Gets the class name of the detected object.</summary>
     public string ClassName => Detection?.ClassName ?? "Whole Image";
-    
+
     /// <summary>Gets the bounding box as [x, y, width, height] or null.</summary>
-    public float[]? BoundingBox => Detection is not null 
+    public float[]? BoundingBox => Detection is not null
         ? [Detection.X1, Detection.Y1, Detection.X2 - Detection.X1, Detection.Y2 - Detection.Y1]
         : null;
 }

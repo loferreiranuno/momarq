@@ -1,5 +1,6 @@
 using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
@@ -17,6 +18,20 @@ NpgsqlConnection.GlobalTypeMapper.UseVector();
 #pragma warning restore CS0618
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Configure multipart body limits for image uploads (up to 50MB)
+builder.Services.Configure<FormOptions>(options =>
+{
+    options.MultipartBodyLengthLimit = 52_428_800; // 50 MB
+    options.ValueLengthLimit = 52_428_800; // 50 MB
+    options.MultipartHeadersLengthLimit = 52_428_800; // 50 MB
+});
+
+// Configure request body limits for Kestrel
+builder.WebHost.ConfigureKestrel(options =>
+{
+    options.Limits.MaxRequestBodySize = 52_428_800; // 50 MB
+});
 
 var jwtOptions = JwtOptions.Create(builder.Configuration);
 builder.Services.AddSingleton(jwtOptions);
