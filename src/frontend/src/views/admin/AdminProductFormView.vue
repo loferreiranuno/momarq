@@ -22,7 +22,8 @@ interface ProductDto {
   description?: string
   price: number
   currency?: string
-  category?: string
+  categoryId?: number
+  categoryName?: string
   productUrl?: string
   createdAt: string
   images: ProductImageDto[]
@@ -33,6 +34,13 @@ interface ProviderDto {
   name: string
 }
 
+interface CategoryDto {
+  id: number
+  name: string
+  cocoClassId: number
+  detectionEnabled: boolean
+}
+
 interface ProductForm {
   providerId: number | null
   externalId: string
@@ -40,7 +48,7 @@ interface ProductForm {
   description: string
   price: number
   currency: string
-  category: string
+  categoryId: number | null
   productUrl: string
 }
 
@@ -57,6 +65,7 @@ const pageTitle = computed(() => (isEditing.value ? 'Edit Product' : 'New Produc
 
 // Data
 const providers = ref<ProviderDto[]>([])
+const categories = ref<CategoryDto[]>([])
 const images = ref<ProductImageDto[]>([])
 const isLoading = ref(true)
 const isSaving = ref(false)
@@ -71,7 +80,7 @@ const form = ref<ProductForm>({
   description: '',
   price: 0,
   currency: 'USD',
-  category: '',
+  categoryId: null,
   productUrl: '',
 })
 
@@ -85,7 +94,7 @@ const fileInput = ref<HTMLInputElement | null>(null)
 const uploadProgress = ref(0)
 
 onMounted(async () => {
-  await loadProviders()
+  await Promise.all([loadProviders(), loadCategories()])
   if (isEditing.value) {
     await loadProduct()
   } else {
@@ -137,6 +146,14 @@ async function loadProviders() {
   }
 }
 
+async function loadCategories() {
+  try {
+    categories.value = await api.get<CategoryDto[]>('/api/categories')
+  } catch (e) {
+    console.error('Failed to load categories:', e)
+  }
+}
+
 async function loadProduct() {
   isLoading.value = true
   error.value = null
@@ -149,7 +166,7 @@ async function loadProduct() {
       description: product.description ?? '',
       price: product.price,
       currency: product.currency ?? 'USD',
-      category: product.category ?? '',
+      categoryId: product.categoryId ?? null,
       productUrl: product.productUrl ?? '',
     }
     images.value = product.images
@@ -178,7 +195,7 @@ async function saveProduct() {
       description: form.value.description.trim() || undefined,
       price: form.value.price,
       currency: form.value.currency || undefined,
-      category: form.value.category.trim() || undefined,
+      categoryId: form.value.categoryId || undefined,
       productUrl: form.value.productUrl.trim() || undefined,
     }
 
@@ -499,13 +516,12 @@ function goBack() {
               </div>
               <div class="form-group">
                 <label class="label" for="category">Category</label>
-                <input
-                  id="category"
-                  v-model="form.category"
-                  type="text"
-                  class="input"
-                  placeholder="e.g., Sofas, Tables"
-                />
+                <select id="category" v-model="form.categoryId" class="input">
+                  <option :value="null">-- Select Category --</option>
+                  <option v-for="cat in categories" :key="cat.id" :value="cat.id">
+                    {{ cat.name }}
+                  </option>
+                </select>
               </div>
             </div>
 

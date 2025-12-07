@@ -48,7 +48,12 @@ public class Product
     /// <summary>
     /// Gets or sets the product category (e.g., "sofa", "lamp", "rug").
     /// </summary>
-    public string? Category { get; set; }
+    public int? CategoryId { get; set; }
+
+    /// <summary>
+    /// Gets or sets the navigation property to the category.
+    /// </summary>
+    public Category? Category { get; set; }
 
     /// <summary>
     /// Gets or sets the URL to the product page on the provider's website.

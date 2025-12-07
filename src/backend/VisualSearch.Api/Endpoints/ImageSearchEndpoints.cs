@@ -114,7 +114,7 @@ public static class ImageSearchEndpoints
                                 ImageUrl = x.Image.ImageUrl,
                                 ProviderName = x.Image.Product.Provider!.Name,
                                 Similarity = (float)(1 - x.Distance),
-                                Category = x.Image.Product.Category,
+                                Category = x.Image.Product.Category != null ? x.Image.Product.Category.Name : null,
                                 ProductUrl = x.Image.Product.ProductUrl
                             })
                             .ToListAsync(cancellationToken);
@@ -167,7 +167,7 @@ public static class ImageSearchEndpoints
                         ImageUrl = x.Image.ImageUrl,
                         ProviderName = x.Image.Product.Provider!.Name,
                         Similarity = (float)(1 - x.Distance),
-                        Category = x.Image.Product.Category,
+                        Category = x.Image.Product.Category != null ? x.Image.Product.Category.Name : null,
                         ProductUrl = x.Image.Product.ProductUrl
                     })
                     .ToListAsync(cancellationToken);

@@ -3,6 +3,7 @@ using Microsoft.ML.OnnxRuntime.Tensors;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
+using VisualSearch.Api.Data;
 
 namespace VisualSearch.Api.Services;
 
@@ -14,7 +15,11 @@ public sealed class ObjectDetectionService : IDisposable
 {
     private readonly InferenceSession? _session;
     private readonly ILogger<ObjectDetectionService> _logger;
+    private readonly IServiceProvider _serviceProvider;
     private readonly bool _isModelLoaded;
+    private HashSet<int>? _enabledClassIds;
+    private DateTime _lastCacheRefresh = DateTime.MinValue;
+    private static readonly TimeSpan CacheExpiration = TimeSpan.FromMinutes(5);
 
     // YOLOv8 input size
     private const int InputSize = 640;
@@ -24,35 +29,6 @@ public sealed class ObjectDetectionService : IDisposable
     
     // IoU threshold for NMS
     private const float IouThreshold = 0.45f;
-
-    // COCO class indices for furniture and home items we care about
-    private static readonly HashSet<int> FurnitureClassIds = new()
-    {
-        56,  // chair
-        57,  // couch/sofa
-        58,  // potted plant
-        59,  // bed
-        60,  // dining table
-        61,  // toilet
-        62,  // tv
-        63,  // laptop
-        64,  // mouse
-        65,  // remote
-        66,  // keyboard
-        67,  // cell phone
-        68,  // microwave
-        69,  // oven
-        70,  // toaster
-        71,  // sink
-        72,  // refrigerator
-        73,  // book
-        74,  // clock
-        75,  // vase
-        76,  // scissors
-        77,  // teddy bear
-        78,  // hair drier
-        79,  // toothbrush
-    };
 
     // COCO class names
     private static readonly string[] CocoClasses =
@@ -72,9 +48,13 @@ public sealed class ObjectDetectionService : IDisposable
     /// <summary>
     /// Initializes a new instance of the <see cref="ObjectDetectionService"/> class.
     /// </summary>
-    public ObjectDetectionService(ILogger<ObjectDetectionService> logger, IWebHostEnvironment environment)
+    public ObjectDetectionService(
+        ILogger<ObjectDetectionService> logger,
+        IWebHostEnvironment environment,
+        IServiceProvider serviceProvider)
     {
         _logger = logger;
+        _serviceProvider = serviceProvider;
 
         var modelPath = Path.Combine(environment.ContentRootPath, "Models", "yolov8n.onnx");
 
@@ -112,6 +92,43 @@ public sealed class ObjectDetectionService : IDisposable
     public bool IsModelLoaded => _isModelLoaded;
 
     /// <summary>
+    /// Refreshes the cache of enabled category class IDs from the database.
+    /// </summary>
+    public void RefreshEnabledCategories()
+    {
+        try
+        {
+            using var scope = _serviceProvider.CreateScope();
+            var dbContext = scope.ServiceProvider.GetRequiredService<VisualSearchDbContext>();
+            
+            _enabledClassIds = dbContext.Categories
+                .Where(c => c.DetectionEnabled)
+                .Select(c => c.CocoClassId)
+                .ToHashSet();
+            
+            _lastCacheRefresh = DateTime.UtcNow;
+            _logger.LogInformation("Refreshed enabled categories cache with {Count} class IDs", _enabledClassIds.Count);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to refresh enabled categories from database. Using cached values.");
+        }
+    }
+
+    /// <summary>
+    /// Gets the enabled class IDs, refreshing the cache if needed.
+    /// </summary>
+    private HashSet<int> GetEnabledClassIds()
+    {
+        if (_enabledClassIds is null || DateTime.UtcNow - _lastCacheRefresh > CacheExpiration)
+        {
+            RefreshEnabledCategories();
+        }
+
+        return _enabledClassIds ?? [];
+    }
+
+    /// <summary>
     /// Detects objects in an image and returns bounding boxes for furniture items.
     /// </summary>
     /// <param name="imageBytes">The raw image bytes.</param>
@@ -123,6 +140,14 @@ public sealed class ObjectDetectionService : IDisposable
         {
             _logger.LogDebug("YOLO model not loaded, returning empty detections.");
             return [];
+        }
+
+        // Get enabled class IDs from database (cached)
+        var enabledClassIds = GetEnabledClassIds();
+        
+        if (enabledClassIds.Count == 0)
+        {
+            _logger.LogWarning("No enabled categories found. Object detection will not filter any classes.");
         }
 
         try
@@ -151,10 +176,10 @@ public sealed class ObjectDetectionService : IDisposable
                 // Apply NMS
                 var nmsDetections = ApplyNms(detections);
 
-                // Filter to furniture classes only
-                var furnitureDetections = nmsDetections
-                    .Where(d => FurnitureClassIds.Contains(d.ClassId))
-                    .ToList();
+                // Filter to enabled furniture classes only (from database)
+                var furnitureDetections = enabledClassIds.Count > 0
+                    ? nmsDetections.Where(d => enabledClassIds.Contains(d.ClassId)).ToList()
+                    : nmsDetections;
 
                 _logger.LogInformation("Detected {Count} furniture objects in image", furnitureDetections.Count);
                 return furnitureDetections;

@@ -8,6 +8,7 @@ using Pgvector.Npgsql;
 using VisualSearch.Api;
 using VisualSearch.Api.Data;
 using VisualSearch.Api.Endpoints;
+using VisualSearch.Api.Extensions;
 using VisualSearch.Api.Services;
 
 // Configure Npgsql global type mapper for pgvector BEFORE any connections are made
@@ -20,45 +21,28 @@ var builder = WebApplication.CreateBuilder(args);
 var jwtOptions = JwtOptions.Create(builder.Configuration);
 builder.Services.AddSingleton(jwtOptions);
 
-// ========== Services Configuration ==========
+// ========== Services Configuration (using organized DI extensions) ==========
 
-var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+// Add database services (DbContext with pgvector)
+builder.Services.AddDatabaseServices(builder.Configuration);
 
-// Add PostgreSQL with pgvector support
-builder.Services.AddDbContext<VisualSearchDbContext>(options =>
-{
-    options.UseNpgsql(
-        connectionString,
-        npgsqlOptions =>
-        {
-            npgsqlOptions.UseVector();
-            npgsqlOptions.EnableRetryOnFailure(
-                maxRetryCount: 5,
-                maxRetryDelay: TimeSpan.FromSeconds(30),
-                errorCodesToAdd: null);
-        });
-});
+// Add repositories (data access layer)
+builder.Services.AddRepositories();
+
+// Add application services (business logic layer)
+builder.Services.AddApplicationServices();
+
+// Add AI services (CLIP, YOLO, vectorization)
+builder.Services.AddAIServices();
+
+// Add infrastructure services (file upload, settings, seed data)
+builder.Services.AddInfrastructureServices();
+
+// Add HTTP services (HTTP clients for external APIs)
+builder.Services.AddHttpServices();
 
 // Add memory cache for settings
 builder.Services.AddMemoryCache();
-
-// Add CLIP embedding service (singleton for model reuse)
-builder.Services.AddSingleton<ClipEmbeddingService>();
-
-// Add object detection service (YOLO for furniture detection)
-builder.Services.AddSingleton<ObjectDetectionService>();
-
-// Add image upload service (handles file storage with resize/compression)
-builder.Services.AddSingleton<ImageUploadService>();
-
-// Add vectorization service (facade combining CLIP + YOLO + local file reading)
-builder.Services.AddSingleton<VectorizationService>();
-
-// Add settings service (singleton for SSE connections)
-builder.Services.AddSingleton<SettingsService>();
-
-// Add HTTP client factory for downloading images
-builder.Services.AddHttpClient();
 
 // Add named HTTP client for image download with SSL bypass (for problematic external URLs)
 builder.Services.AddHttpClient("ImageDownload")
@@ -67,7 +51,7 @@ builder.Services.AddHttpClient("ImageDownload")
         ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
     });
 
-// Add seed data service (runs on startup)
+// Add hosted service for seed data
 builder.Services.AddHostedService<SeedDataService>();
 
 // Configure JWT authentication
@@ -157,6 +141,9 @@ app.MapSettingsEndpoints();
 
 // Map image search endpoint (server-side ML)
 app.MapImageSearchEndpoints();
+
+// Map public categories endpoint
+app.MapCategoriesEndpoints();
 
 // Map admin endpoints (JSON REST)
 app.MapAdminEndpoints();

@@ -44,6 +44,11 @@ public class VisualSearchDbContext : DbContext
     /// </summary>
     public DbSet<AdminUser> AdminUsers => Set<AdminUser>();
 
+    /// <summary>
+    /// Gets or sets the categories DbSet.
+    /// </summary>
+    public DbSet<Category> Categories => Set<Category>();
+
     /// <inheritdoc/>
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -118,9 +123,8 @@ public class VisualSearchDbContext : DbContext
                 .HasMaxLength(3)
                 .HasDefaultValue("EUR");
 
-            entity.Property(e => e.Category)
-                .HasColumnName("category")
-                .HasMaxLength(255);
+            entity.Property(e => e.CategoryId)
+                .HasColumnName("category_id");
 
             entity.Property(e => e.ProductUrl)
                 .HasColumnName("product_url")
@@ -135,8 +139,13 @@ public class VisualSearchDbContext : DbContext
                 .HasForeignKey(e => e.ProviderId)
                 .OnDelete(DeleteBehavior.Cascade);
 
+            entity.HasOne(e => e.Category)
+                .WithMany(c => c.Products)
+                .HasForeignKey(e => e.CategoryId)
+                .OnDelete(DeleteBehavior.Restrict);
+
             entity.HasIndex(e => e.ProviderId);
-            entity.HasIndex(e => e.Category);
+            entity.HasIndex(e => e.CategoryId);
             entity.HasIndex(e => new { e.ProviderId, e.ExternalId })
                 .IsUnique()
                 .HasFilter("external_id IS NOT NULL");
@@ -256,6 +265,42 @@ public class VisualSearchDbContext : DbContext
 
             entity.HasIndex(e => e.Username)
                 .IsUnique();
+        });
+
+        // Configure Category entity
+        modelBuilder.Entity<Category>(entity =>
+        {
+            entity.ToTable("categories");
+
+            entity.HasKey(e => e.Id);
+
+            entity.Property(e => e.Id)
+                .HasColumnName("id");
+
+            entity.Property(e => e.Name)
+                .HasColumnName("name")
+                .HasMaxLength(100)
+                .IsRequired();
+
+            entity.Property(e => e.CocoClassId)
+                .HasColumnName("coco_class_id")
+                .IsRequired();
+
+            entity.Property(e => e.DetectionEnabled)
+                .HasColumnName("detection_enabled")
+                .HasDefaultValue(true);
+
+            entity.Property(e => e.CreatedAt)
+                .HasColumnName("created_at")
+                .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
+            entity.HasIndex(e => e.CocoClassId)
+                .IsUnique();
+
+            entity.HasIndex(e => e.Name)
+                .IsUnique();
+
+            entity.HasIndex(e => e.DetectionEnabled);
         });
     }
 }

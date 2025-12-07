@@ -48,6 +48,31 @@ public static class AdminEndpoints
             .WithName("DeleteProvider")
             .WithDescription("Deletes a provider and all its products.");
 
+        // Category endpoints
+        group.MapGet("/categories", GetCategoriesAsync)
+            .WithName("GetCategories")
+            .WithDescription("Gets all categories.");
+
+        group.MapGet("/categories/{id:int}", GetCategoryByIdAsync)
+            .WithName("GetCategoryById")
+            .WithDescription("Gets a category by ID.");
+
+        group.MapPost("/categories", CreateCategoryAsync)
+            .WithName("CreateCategory")
+            .WithDescription("Creates a new category.");
+
+        group.MapPut("/categories/{id:int}", UpdateCategoryAsync)
+            .WithName("UpdateCategory")
+            .WithDescription("Updates a category.");
+
+        group.MapDelete("/categories/{id:int}", DeleteCategoryAsync)
+            .WithName("DeleteCategory")
+            .WithDescription("Deletes a category. Fails if products are associated.");
+
+        group.MapPatch("/categories/{id:int}/detection", ToggleCategoryDetectionAsync)
+            .WithName("ToggleCategoryDetection")
+            .WithDescription("Toggles detection enabled for a category.");
+
         // Product endpoints
         group.MapGet("/products", GetProductsAsync)
             .WithName("GetProducts")
@@ -287,6 +312,231 @@ public static class AdminEndpoints
         return Results.NoContent();
     }
 
+    // ========== Category Endpoints ==========
+
+    private static async Task<IResult> GetCategoriesAsync(
+        VisualSearchDbContext dbContext,
+        [FromQuery] bool? detectionEnabled = null,
+        CancellationToken cancellationToken = default)
+    {
+        var query = dbContext.Categories.AsQueryable();
+
+        if (detectionEnabled.HasValue)
+        {
+            query = query.Where(c => c.DetectionEnabled == detectionEnabled.Value);
+        }
+
+        var categories = await query
+            .OrderBy(c => c.Name)
+            .Select(c => new CategoryDto
+            {
+                Id = c.Id,
+                Name = c.Name,
+                CocoClassId = c.CocoClassId,
+                DetectionEnabled = c.DetectionEnabled,
+                ProductCount = c.Products.Count,
+                CreatedAt = c.CreatedAt
+            })
+            .ToListAsync(cancellationToken);
+
+        return Results.Ok(categories);
+    }
+
+    private static async Task<IResult> GetCategoryByIdAsync(
+        int id,
+        VisualSearchDbContext dbContext,
+        CancellationToken cancellationToken)
+    {
+        var category = await dbContext.Categories
+            .Where(c => c.Id == id)
+            .Select(c => new CategoryDto
+            {
+                Id = c.Id,
+                Name = c.Name,
+                CocoClassId = c.CocoClassId,
+                DetectionEnabled = c.DetectionEnabled,
+                ProductCount = c.Products.Count,
+                CreatedAt = c.CreatedAt
+            })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        return category is not null ? Results.Ok(category) : Results.NotFound();
+    }
+
+    private static async Task<IResult> CreateCategoryAsync(
+        [FromBody] CreateCategoryRequest request,
+        VisualSearchDbContext dbContext,
+        ObjectDetectionService detectionService,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(request.Name))
+        {
+            return Results.BadRequest(new { Error = "Category name is required." });
+        }
+
+        // Check for duplicate name
+        var existingName = await dbContext.Categories
+            .AnyAsync(c => c.Name == request.Name, cancellationToken);
+
+        if (existingName)
+        {
+            return Results.BadRequest(new { Error = $"Category with name '{request.Name}' already exists." });
+        }
+
+        // Check for duplicate COCO class ID
+        var existingCocoId = await dbContext.Categories
+            .AnyAsync(c => c.CocoClassId == request.CocoClassId, cancellationToken);
+
+        if (existingCocoId)
+        {
+            return Results.BadRequest(new { Error = $"Category with COCO class ID {request.CocoClassId} already exists." });
+        }
+
+        var category = new Category
+        {
+            Name = request.Name,
+            CocoClassId = request.CocoClassId,
+            DetectionEnabled = request.DetectionEnabled
+        };
+
+        dbContext.Categories.Add(category);
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        // Refresh detection service cache
+        detectionService.RefreshEnabledCategories();
+
+        return Results.Created($"/api/admin/categories/{category.Id}", new CategoryDto
+        {
+            Id = category.Id,
+            Name = category.Name,
+            CocoClassId = category.CocoClassId,
+            DetectionEnabled = category.DetectionEnabled,
+            ProductCount = 0,
+            CreatedAt = category.CreatedAt
+        });
+    }
+
+    private static async Task<IResult> UpdateCategoryAsync(
+        int id,
+        [FromBody] UpdateCategoryRequest request,
+        VisualSearchDbContext dbContext,
+        ObjectDetectionService detectionService,
+        CancellationToken cancellationToken)
+    {
+        var category = await dbContext.Categories.FindAsync([id], cancellationToken);
+
+        if (category is null)
+        {
+            return Results.NotFound();
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.Name) && request.Name != category.Name)
+        {
+            var existingName = await dbContext.Categories
+                .AnyAsync(c => c.Name == request.Name && c.Id != id, cancellationToken);
+
+            if (existingName)
+            {
+                return Results.BadRequest(new { Error = $"Category with name '{request.Name}' already exists." });
+            }
+
+            category.Name = request.Name;
+        }
+
+        if (request.CocoClassId.HasValue && request.CocoClassId.Value != category.CocoClassId)
+        {
+            var existingCocoId = await dbContext.Categories
+                .AnyAsync(c => c.CocoClassId == request.CocoClassId.Value && c.Id != id, cancellationToken);
+
+            if (existingCocoId)
+            {
+                return Results.BadRequest(new { Error = $"Category with COCO class ID {request.CocoClassId} already exists." });
+            }
+
+            category.CocoClassId = request.CocoClassId.Value;
+        }
+
+        if (request.DetectionEnabled.HasValue)
+        {
+            category.DetectionEnabled = request.DetectionEnabled.Value;
+        }
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        // Refresh detection service cache
+        detectionService.RefreshEnabledCategories();
+
+        return Results.Ok(new CategoryDto
+        {
+            Id = category.Id,
+            Name = category.Name,
+            CocoClassId = category.CocoClassId,
+            DetectionEnabled = category.DetectionEnabled,
+            ProductCount = await dbContext.Products.CountAsync(p => p.CategoryId == id, cancellationToken),
+            CreatedAt = category.CreatedAt
+        });
+    }
+
+    private static async Task<IResult> DeleteCategoryAsync(
+        int id,
+        VisualSearchDbContext dbContext,
+        CancellationToken cancellationToken)
+    {
+        var category = await dbContext.Categories
+            .Include(c => c.Products)
+            .FirstOrDefaultAsync(c => c.Id == id, cancellationToken);
+
+        if (category is null)
+        {
+            return Results.NotFound();
+        }
+
+        // Cannot delete if products are associated
+        if (category.Products.Count > 0)
+        {
+            return Results.BadRequest(new 
+            { 
+                Error = $"Cannot delete category '{category.Name}' because it has {category.Products.Count} associated product(s). Please reassign or delete those products first." 
+            });
+        }
+
+        dbContext.Categories.Remove(category);
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        return Results.NoContent();
+    }
+
+    private static async Task<IResult> ToggleCategoryDetectionAsync(
+        int id,
+        [FromBody] ToggleDetectionRequest request,
+        VisualSearchDbContext dbContext,
+        ObjectDetectionService detectionService,
+        CancellationToken cancellationToken)
+    {
+        var category = await dbContext.Categories.FindAsync([id], cancellationToken);
+
+        if (category is null)
+        {
+            return Results.NotFound();
+        }
+
+        category.DetectionEnabled = request.DetectionEnabled;
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        // Refresh detection service cache
+        detectionService.RefreshEnabledCategories();
+
+        return Results.Ok(new CategoryDto
+        {
+            Id = category.Id,
+            Name = category.Name,
+            CocoClassId = category.CocoClassId,
+            DetectionEnabled = category.DetectionEnabled,
+            ProductCount = await dbContext.Products.CountAsync(p => p.CategoryId == id, cancellationToken),
+            CreatedAt = category.CreatedAt
+        });
+    }
+
     // ========== Product Endpoints ==========
 
     private static async Task<IResult> GetProductsAsync(
@@ -294,12 +544,13 @@ public static class AdminEndpoints
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20,
         [FromQuery] int? providerId = null,
-        [FromQuery] string? category = null,
+        [FromQuery] int? categoryId = null,
         [FromQuery] string? search = null,
         CancellationToken cancellationToken = default)
     {
         var query = dbContext.Products
             .Include(p => p.Provider)
+            .Include(p => p.Category)
             .Include(p => p.Images)
             .AsQueryable();
 
@@ -308,9 +559,9 @@ public static class AdminEndpoints
             query = query.Where(p => p.ProviderId == providerId.Value);
         }
 
-        if (!string.IsNullOrWhiteSpace(category))
+        if (categoryId.HasValue)
         {
-            query = query.Where(p => p.Category == category);
+            query = query.Where(p => p.CategoryId == categoryId.Value);
         }
 
         if (!string.IsNullOrWhiteSpace(search))
@@ -334,7 +585,8 @@ public static class AdminEndpoints
                 Description = p.Description,
                 Price = p.Price,
                 Currency = p.Currency,
-                Category = p.Category,
+                CategoryId = p.CategoryId,
+                CategoryName = p.Category != null ? p.Category.Name : null,
                 ProductUrl = p.ProductUrl,
                 CreatedAt = p.CreatedAt,
                 Images = p.Images.Select(i => new ProductImageDto
@@ -367,6 +619,7 @@ public static class AdminEndpoints
     {
         var product = await dbContext.Products
             .Include(p => p.Provider)
+            .Include(p => p.Category)
             .Include(p => p.Images)
             .Where(p => p.Id == id)
             .Select(p => new ProductDto
@@ -379,7 +632,8 @@ public static class AdminEndpoints
                 Description = p.Description,
                 Price = p.Price,
                 Currency = p.Currency,
-                Category = p.Category,
+                CategoryId = p.CategoryId,
+                CategoryName = p.Category != null ? p.Category.Name : null,
                 ProductUrl = p.ProductUrl,
                 CreatedAt = p.CreatedAt,
                 Images = p.Images.Select(i => new ProductImageDto
@@ -424,7 +678,7 @@ public static class AdminEndpoints
             Description = request.Description,
             Price = request.Price,
             Currency = request.Currency ?? "EUR",
-            Category = request.Category,
+            CategoryId = request.CategoryId,
             ProductUrl = request.ProductUrl
         };
 
@@ -485,9 +739,20 @@ public static class AdminEndpoints
             product.Currency = request.Currency;
         }
 
-        if (request.Category is not null)
+        if (request.CategoryId.HasValue)
         {
-            product.Category = request.Category;
+            // Validate category exists if a value is provided
+            if (request.CategoryId.Value > 0)
+            {
+                var categoryExists = await dbContext.Categories
+                    .AnyAsync(c => c.Id == request.CategoryId.Value, cancellationToken);
+
+                if (!categoryExists)
+                {
+                    return Results.BadRequest(new { Error = $"Category with ID {request.CategoryId.Value} not found." });
+                }
+            }
+            product.CategoryId = request.CategoryId.Value > 0 ? request.CategoryId.Value : null;
         }
 
         if (request.ProductUrl is not null)
@@ -997,7 +1262,8 @@ public static class AdminEndpoints
         public string? Description { get; set; }
         public decimal Price { get; set; }
         public string? Currency { get; set; }
-        public string? Category { get; set; }
+        public int? CategoryId { get; set; }
+        public string? CategoryName { get; set; }
         public string? ProductUrl { get; set; }
         public DateTime CreatedAt { get; set; }
         public List<ProductImageDto> Images { get; set; } = [];
@@ -1045,7 +1311,7 @@ public static class AdminEndpoints
         public string? Description { get; set; }
         public decimal Price { get; set; }
         public string? Currency { get; set; }
-        public string? Category { get; set; }
+        public int? CategoryId { get; set; }
         public string? ProductUrl { get; set; }
     }
 
@@ -1057,7 +1323,7 @@ public static class AdminEndpoints
         public string? Description { get; set; }
         public decimal? Price { get; set; }
         public string? Currency { get; set; }
-        public string? Category { get; set; }
+        public int? CategoryId { get; set; }
         public string? ProductUrl { get; set; }
     }
 
@@ -1071,5 +1337,34 @@ public static class AdminEndpoints
     {
         public string? ImageUrl { get; set; }
         public bool? IsPrimary { get; set; }
+    }
+
+    private sealed class CategoryDto
+    {
+        public int Id { get; set; }
+        public required string Name { get; set; }
+        public int CocoClassId { get; set; }
+        public bool DetectionEnabled { get; set; }
+        public int ProductCount { get; set; }
+        public DateTime CreatedAt { get; set; }
+    }
+
+    private sealed class CreateCategoryRequest
+    {
+        public required string Name { get; set; }
+        public int CocoClassId { get; set; }
+        public bool DetectionEnabled { get; set; } = true;
+    }
+
+    private sealed class UpdateCategoryRequest
+    {
+        public string? Name { get; set; }
+        public int? CocoClassId { get; set; }
+        public bool? DetectionEnabled { get; set; }
+    }
+
+    private sealed class ToggleDetectionRequest
+    {
+        public bool DetectionEnabled { get; set; }
     }
 }
