@@ -17,9 +17,9 @@ public sealed class ClipEmbeddingService : IDisposable
     private readonly bool _isModelLoaded;
     private readonly string? _inputName;
     private readonly string? _outputName;
-    private readonly int _embeddingDimension = 512;
+    private readonly int _embeddingDimension = 768;
 
-    // CLIP ViT-B/32 image preprocessing constants
+    // CLIP ViT-L/14 image preprocessing constants
     private const int ImageSize = 224;
     private static readonly float[] Mean = [0.48145466f, 0.4578275f, 0.40821073f];
     private static readonly float[] Std = [0.26862954f, 0.26130258f, 0.27577711f];
@@ -33,8 +33,8 @@ public sealed class ClipEmbeddingService : IDisposable
     {
         _logger = logger;
 
-        var modelPath = Path.Combine(environment.ContentRootPath, "Models", "clip-vit-base-patch32-visual.onnx");
-
+        // var modelPath = Path.Combine(environment.ContentRootPath, "Models", "clip-vit-base-patch32-visual.onnx");
+        var modelPath = Path.Combine(environment.ContentRootPath, "Models", "clip-vit-large-patch14-visual.onnx");
         if (File.Exists(modelPath))
         {
             try
@@ -94,11 +94,11 @@ public sealed class ClipEmbeddingService : IDisposable
     public bool IsModelLoaded => _isModelLoaded;
 
     /// <summary>
-    /// Generates a 512-dimensional CLIP embedding from an image byte array.
+    /// Generates a 768-dimensional CLIP embedding from an image byte array.
     /// </summary>
     /// <param name="imageBytes">The raw image bytes (JPEG, PNG, etc.).</param>
     /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>A normalized 512-dimensional embedding vector, or null if the model is not loaded.</returns>
+    /// <returns>A normalized 768-dimensional embedding vector, or null if the model is not loaded.</returns>
     public async Task<float[]?> GenerateEmbeddingAsync(byte[] imageBytes, CancellationToken cancellationToken = default)
     {
         if (!_isModelLoaded || _session is null || _inputName is null || _outputName is null)
@@ -169,7 +169,7 @@ public sealed class ClipEmbeddingService : IDisposable
     /// <param name="imageUrl">The URL of the image to process.</param>
     /// <param name="httpClient">The HTTP client for downloading the image.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>A normalized 512-dimensional embedding vector, or null if generation fails.</returns>
+    /// <returns>A normalized 768-dimensional embedding vector, or null if generation fails.</returns>
     public async Task<float[]?> GenerateEmbeddingFromUrlAsync(string imageUrl, HttpClient httpClient, CancellationToken cancellationToken = default)
     {
         try
@@ -244,7 +244,7 @@ public sealed class ClipEmbeddingService : IDisposable
 
     /// <summary>
     /// Generates a simple color-histogram based pseudo-embedding when CLIP model is not available.
-    /// This is a fallback for demo/POC purposes - produces 512-dim vector from image colors.
+    /// This is a fallback for demo/POC purposes - produces embedding vector from image colors.
     /// </summary>
     public async Task<float[]> GenerateFallbackEmbeddingAsync(byte[] imageBytes, CancellationToken cancellationToken = default)
     {
@@ -255,8 +255,8 @@ public sealed class ClipEmbeddingService : IDisposable
             // Resize to small size for fast processing
             image.Mutate(x => x.Resize(64, 64));
 
-            // Create 512-dim embedding from color statistics
-            var embedding = new float[512];
+            // Create embedding from color statistics using current dimension
+            var embedding = new float[_embeddingDimension];
             
             // Compute color histograms (3 channels × 64 bins = 192 values)
             var rHist = new float[64];
@@ -310,7 +310,7 @@ public sealed class ClipEmbeddingService : IDisposable
             }
 
             var rng = new Random(hash);
-            for (int i = 195; i < 512; i++)
+            for (int i = 195; i < _embeddingDimension; i++)
             {
                 embedding[i] = (float)(rng.NextDouble() * 0.1 - 0.05); // Small random values
             }
@@ -323,8 +323,8 @@ public sealed class ClipEmbeddingService : IDisposable
             _logger.LogError(ex, "Failed to generate fallback embedding");
             // Return random normalized vector as last resort
             var rng = new Random();
-            var embedding = new float[512];
-            for (int i = 0; i < 512; i++)
+            var embedding = new float[_embeddingDimension];
+            for (int i = 0; i < _embeddingDimension; i++)
             {
                 embedding[i] = (float)(rng.NextDouble() * 2 - 1);
             }

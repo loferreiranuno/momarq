@@ -66,7 +66,7 @@ public partial class InitialCreate : Migration
                     .Annotation("Npgsql:ValueGenerationStrategy", NpgsqlValueGenerationStrategy.IdentityByDefaultColumn),
                 product_id = table.Column<int>(type: "integer", nullable: false),
                 image_url = table.Column<string>(type: "character varying(1024)", maxLength: 1024, nullable: false),
-                embedding = table.Column<string>(type: "vector(512)", nullable: true),
+                embedding = table.Column<string>(type: "vector(768)", nullable: true),
                 is_primary = table.Column<bool>(type: "boolean", nullable: false, defaultValue: false),
                 created_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false, defaultValueSql: "CURRENT_TIMESTAMP")
             },

@@ -1,11 +1,5 @@
-using Microsoft.EntityFrameworkCore;
-using Pgvector;
-using Pgvector.EntityFrameworkCore;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
-using SixLabors.ImageSharp.Processing;
-using VisualSearch.Api.Data;
-using VisualSearch.Api.Services;
+using VisualSearch.Api.Application.Services;
+using VisualSearch.Api.Contracts.DTOs;
 
 namespace VisualSearch.Api.Endpoints;
 
@@ -16,9 +10,6 @@ namespace VisualSearch.Api.Endpoints;
 /// </summary>
 public static class ImageSearchEndpoints
 {
-    private const int MaxResultsPerObject = 8;
-    private const float MinSimilarityThreshold = 0.30f; // 30% minimum similarity
-
     public static void MapImageSearchEndpoints(this WebApplication app)
     {
         app.MapPost("/api/search/image", HandleImageSearchAsync)
@@ -32,15 +23,10 @@ public static class ImageSearchEndpoints
 
     private static async Task<IResult> HandleImageSearchAsync(
         HttpRequest request,
-        VisualSearchDbContext dbContext,
-        VectorizationService vectorizationService,
-        ClipEmbeddingService clipService,
-        ObjectDetectionService detectionService,
+        VisualSearchService visualSearchService,
         ILogger<Program> logger,
         CancellationToken cancellationToken)
     {
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-
         try
         {
             // Read image from request
@@ -76,124 +62,25 @@ public static class ImageSearchEndpoints
 
             logger.LogInformation("Received image: {Size} bytes", imageBytes.Length);
 
-            // Try object detection first (for room images)
-            var allResults = new List<DetectedObjectResults>();
-            var usedObjectDetection = false;
+            // Delegate to application service
+            var result = await visualSearchService.SearchByImageAsync(imageBytes, cancellationToken);
 
-            if (vectorizationService.IsDetectionAvailable)
-            {
-                var detectedEmbeddings = await vectorizationService.DetectAndEmbedAsync(imageBytes, cancellationToken);
-                
-                if (detectedEmbeddings.Count > 0)
-                {
-                    usedObjectDetection = true;
-                    logger.LogInformation("Detected {Count} furniture objects in image", detectedEmbeddings.Count);
-
-                    // Search for each detected object
-                    foreach (var detectedObj in detectedEmbeddings)
-                    {
-                        var queryVector = new Vector(detectedObj.Embedding);
-                        
-                        var objectResults = await dbContext.ProductImages
-                            .Where(pi => pi.Embedding != null)
-                            .Include(pi => pi.Product)
-                                .ThenInclude(p => p!.Provider)
-                            .Select(pi => new
-                            {
-                                Image = pi,
-                                Distance = pi.Embedding!.CosineDistance(queryVector)
-                            })
-                            .Where(x => (1 - x.Distance) >= MinSimilarityThreshold)
-                            .OrderBy(x => x.Distance)
-                            .Take(MaxResultsPerObject)
-                            .Select(x => new ProductResult
-                            {
-                                ProductId = x.Image.ProductId,
-                                Name = x.Image.Product!.Name,
-                                Price = (float)x.Image.Product.Price,
-                                ImageUrl = x.Image.ImageUrl,
-                                ProviderName = x.Image.Product.Provider!.Name,
-                                Similarity = (float)(1 - x.Distance),
-                                Category = x.Image.Product.Category != null ? x.Image.Product.Category.Name : null,
-                                ProductUrl = x.Image.Product.ProductUrl
-                            })
-                            .ToListAsync(cancellationToken);
-
-                        if (objectResults.Count > 0)
-                        {
-                            allResults.Add(new DetectedObjectResults
-                            {
-                                ClassName = detectedObj.ClassName,
-                                BoundingBox = detectedObj.BoundingBox,
-                                Results = objectResults
-                            });
-                        }
-                    }
-                }
-            }
-
-            // Fallback: no objects detected or object detection not available - use whole image
-            if (!usedObjectDetection || allResults.Count == 0)
-            {
-                float[]? embedding = null;
-                
-                if (clipService.IsModelLoaded)
-                {
-                    embedding = await clipService.GenerateEmbeddingAsync(imageBytes, cancellationToken);
-                }
-                
-                // Use fallback if CLIP failed
-                embedding ??= await clipService.GenerateFallbackEmbeddingAsync(imageBytes, cancellationToken);
-
-                var queryVector = new Vector(embedding);
-
-                var results = await dbContext.ProductImages
-                    .Where(pi => pi.Embedding != null)
-                    .Include(pi => pi.Product)
-                        .ThenInclude(p => p!.Provider)
-                    .Select(pi => new
-                    {
-                        Image = pi,
-                        Distance = pi.Embedding!.CosineDistance(queryVector)
-                    })
-                    .Where(x => (1 - x.Distance) >= MinSimilarityThreshold)
-                    .OrderBy(x => x.Distance)
-                    .Take(MaxResultsPerObject)
-                    .Select(x => new ProductResult
-                    {
-                        ProductId = x.Image.ProductId,
-                        Name = x.Image.Product!.Name,
-                        Price = (float)x.Image.Product.Price,
-                        ImageUrl = x.Image.ImageUrl,
-                        ProviderName = x.Image.Product.Provider!.Name,
-                        Similarity = (float)(1 - x.Distance),
-                        Category = x.Image.Product.Category != null ? x.Image.Product.Category.Name : null,
-                        ProductUrl = x.Image.Product.ProductUrl
-                    })
-                    .ToListAsync(cancellationToken);
-
-                allResults.Add(new DetectedObjectResults
-                {
-                    ClassName = "Whole Image",
-                    BoundingBox = null,
-                    Results = results
-                });
-            }
-
-            sw.Stop();
-            logger.LogInformation("Search completed in {Time}ms total, found {ObjectCount} objects with {ResultCount} total results", 
-                sw.ElapsedMilliseconds, 
-                allResults.Count,
-                allResults.Sum(r => r.Results.Count));
-
+            // Map to response (for backward compatibility with existing API contract)
             return Results.Ok(new ImageSearchResponse
             {
-                DetectedObjects = allResults,
-                Results = allResults.SelectMany(r => r.Results).ToList(), // Flat list for backward compatibility
-                ProcessingTimeMs = (int)sw.ElapsedMilliseconds,
-                UsedObjectDetection = usedObjectDetection,
-                ClipModelLoaded = clipService.IsModelLoaded,
-                YoloModelLoaded = detectionService.IsModelLoaded
+                DetectedObjects = result.DetectedObjects
+                    .Select(d => new DetectedObjectResults
+                    {
+                        ClassName = d.ClassName,
+                        BoundingBox = d.BoundingBox,
+                        Results = d.Results.Select(MapToProductResult).ToList()
+                    })
+                    .ToList(),
+                Results = result.AllResults.Select(MapToProductResult).ToList(),
+                ProcessingTimeMs = result.ProcessingTimeMs,
+                UsedObjectDetection = result.UsedObjectDetection,
+                ClipModelLoaded = result.ClipModelLoaded,
+                YoloModelLoaded = result.YoloModelLoaded
             });
         }
         catch (Exception ex)
@@ -201,6 +88,21 @@ public static class ImageSearchEndpoints
             logger.LogError(ex, "Image search failed");
             return Results.Json(new { error = ex.Message }, statusCode: 500);
         }
+    }
+
+    private static ProductResult MapToProductResult(SearchResultDto dto)
+    {
+        return new ProductResult
+        {
+            ProductId = dto.ProductId,
+            Name = dto.ProductName,
+            Price = dto.Price.HasValue ? (float)dto.Price.Value : 0,
+            ImageUrl = dto.ImageUrl,
+            ProviderName = dto.ProviderName,
+            Similarity = (float)dto.Similarity,
+            Category = dto.CategoryName,
+            ProductUrl = dto.ProductUrl
+        };
     }
 }
 

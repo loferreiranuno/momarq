@@ -8,5 +8,6 @@ public record SearchResultDto(
     string ProviderName,
     string? CategoryName,
     string ImageUrl,
+    string? ProductUrl,
     double Similarity
 );

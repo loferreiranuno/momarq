@@ -175,7 +175,7 @@ public class VisualSearchDbContext : DbContext
 
             entity.Property(e => e.Embedding)
                 .HasColumnName("embedding")
-                .HasColumnType("vector(512)");
+                .HasColumnType("vector(768)");
 
             entity.Property(e => e.IsPrimary)
                 .HasColumnName("is_primary")

@@ -79,7 +79,7 @@ const form = ref<ProductForm>({
   name: '',
   description: '',
   price: 0,
-  currency: 'USD',
+  currency: 'EUR',
   categoryId: null,
   productUrl: '',
 })
@@ -509,9 +509,9 @@ function goBack() {
               <div class="form-group">
                 <label class="label" for="currency">Currency</label>
                 <select id="currency" v-model="form.currency" class="input">
-                  <option value="USD">USD</option>
+                  <!-- <option value="USD">USD</option> -->
                   <option value="EUR">EUR</option>
-                  <option value="GBP">GBP</option>
+                  <!-- <option value="GBP">GBP</option> -->
                 </select>
               </div>
               <div class="form-group">

@@ -202,7 +202,7 @@ namespace VisualSearch.Api.Migrations
                         .HasDefaultValueSql("CURRENT_TIMESTAMP");
 
                     b.Property<Vector>("Embedding")
-                        .HasColumnType("vector(512)")
+                        .HasColumnType("vector(768)")
                         .HasColumnName("embedding");
 
                     b.Property<string>("ImageUrl")
