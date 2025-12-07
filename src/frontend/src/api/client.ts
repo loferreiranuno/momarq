@@ -81,7 +81,7 @@ export async function apiClient<T>(options: ApiClientOptions): Promise<T> {
 
 export async function uploadImage(file: Blob): Promise<ImageSearchResponse> {
   const formData = new FormData()
-  formData.append('image', file, 'image.jpg')
+  formData.append('file', file, 'image.jpg')
 
   const response = await fetch('/api/search/image', {
     method: 'POST',
