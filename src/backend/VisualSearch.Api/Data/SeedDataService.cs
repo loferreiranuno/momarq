@@ -171,13 +171,13 @@ public class SeedDataService : IHostedService
         var adminUser = new AdminUser
         {
             Username = "admin",
-            PasswordHash = BCrypt.Net.BCrypt.HashPassword("admin123"),
+            PasswordHash = BCrypt.Net.BCrypt.HashPassword("admin123!"),
             MustChangePassword = true
         };
 
         dbContext.AdminUsers.Add(adminUser);
         await dbContext.SaveChangesAsync(cancellationToken);
-        _logger.LogInformation("Created default admin user. Username: admin, Password: admin123 (must change on first login)");
+        _logger.LogInformation("Created default admin user. Username: admin, Password: admin123! (must change on first login)");
     }
 
     private static async Task SeedProvidersAsync(VisualSearchDbContext dbContext, CancellationToken cancellationToken)

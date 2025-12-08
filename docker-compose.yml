@@ -32,6 +32,7 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       - ConnectionStrings__DefaultConnection=Host=postgres;Database=visualsearch;Username=vsuser;Password=vspassword123
+      - Jwt__Key=LocalDev-VisualSearch-JWT-Key-32chars!
       - Uploads__Path=/app/uploads
     volumes:
       - uploads_data:/app/uploads

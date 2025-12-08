@@ -266,7 +266,7 @@ docker image prune -f
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `ConnectionStrings__DefaultConnection` | PostgreSQL connection string | See docker-compose |
-| `Jwt__SecretKey` | JWT signing key (min 32 chars) | Auto-generated |
+| `Jwt__Key` | JWT signing key (min 32 chars) | Auto-generated |
 | `Jwt__Issuer` | JWT issuer | `VisualSearchApi` |
 | `Jwt__Audience` | JWT audience | `VisualSearchApp` |
 

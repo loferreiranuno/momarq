@@ -62,7 +62,7 @@ async function handlePasswordChange() {
 
   isLoading.value = true
   try {
-    const success = await authStore.changePassword(password.value, newPassword.value)
+    const success = await authStore.changePassword(username.value, password.value, newPassword.value)
     if (success) {
       router.push('/admin/dashboard')
     } else {

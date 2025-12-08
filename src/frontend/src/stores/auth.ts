@@ -53,19 +53,24 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  async function changePassword(currentPassword: string, newPassword: string): Promise<boolean> {
+  async function changePassword(usernameInput: string, currentPassword: string, newPassword: string): Promise<boolean> {
     isLoading.value = true
     error.value = null
 
     try {
-      await apiClient({
+      const response = await apiClient<{ success: boolean; token?: string; expiresAt?: string }>({
         url: '/api/auth/change-password',
         method: 'POST',
-        data: { currentPassword, newPassword },
+        data: { username: usernameInput, currentPassword, newPassword },
       })
 
-      mustChangePassword.value = false
-      localStorage.setItem('auth_must_change', 'false')
+      if (response.success && response.token) {
+        // Store the new token
+        token.value = response.token
+        mustChangePassword.value = false
+        localStorage.setItem('auth_token', response.token)
+        localStorage.setItem('auth_must_change', 'false')
+      }
 
       return true
     } catch (err) {

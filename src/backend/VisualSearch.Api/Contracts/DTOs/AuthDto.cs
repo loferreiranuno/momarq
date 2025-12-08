@@ -15,7 +15,9 @@ public record LoginResultDto(
 /// </summary>
 public record ChangePasswordResultDto(
     bool Success,
-    string? ErrorMessage = null
+    string? ErrorMessage = null,
+    string? Token = null,
+    DateTime? ExpiresAt = null
 );
 
 /// <summary>

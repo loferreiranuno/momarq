@@ -25,12 +25,12 @@ public static class AuthEndpoints
             .WithDescription("Authenticates an admin user and returns a JWT token.");
 
         group.MapPost("/change-password", HandleChangePasswordAsync)
-            .RequireAuthorization("Admin")
-            .Produces(200)
+            .AllowAnonymous()
+            .Produces<ChangePasswordResponse>(200)
             .Produces(400)
             .Produces(401)
             .WithName("ChangePassword")
-            .WithDescription("Changes the authenticated user's password.");
+            .WithDescription("Changes the user's password. Validates via username and current password.");
 
         group.MapGet("/me", HandleGetCurrentUserAsync)
             .RequireAuthorization("Admin")
@@ -63,18 +63,11 @@ public static class AuthEndpoints
 
     private static async Task<IResult> HandleChangePasswordAsync(
         ChangePasswordRequest request,
-        ClaimsPrincipal user,
         AuthService authService,
         CancellationToken cancellationToken)
     {
-        var username = user.FindFirst(ClaimTypes.Name)?.Value;
-        if (username is null)
-        {
-            return Results.Unauthorized();
-        }
-
         var result = await authService.ChangePasswordAsync(
-            username,
+            request.Username,
             request.CurrentPassword,
             request.NewPassword,
             cancellationToken);
@@ -84,7 +77,12 @@ public static class AuthEndpoints
             return Results.BadRequest(new { error = result.ErrorMessage });
         }
 
-        return Results.Ok(new { message = "Password changed successfully" });
+        return Results.Ok(new ChangePasswordResponse
+        {
+            Success = true,
+            Token = result.Token,
+            ExpiresAt = result.ExpiresAt
+        });
     }
 
     private static IResult HandleGetCurrentUserAsync(ClaimsPrincipal user)
@@ -139,11 +137,29 @@ public sealed record LoginResponse
 /// </summary>
 public sealed record ChangePasswordRequest
 {
+    /// <summary>Gets or sets the username.</summary>
+    public required string Username { get; init; }
+
     /// <summary>Gets or sets the current password.</summary>
     public required string CurrentPassword { get; init; }
 
     /// <summary>Gets or sets the new password.</summary>
     public required string NewPassword { get; init; }
+}
+
+/// <summary>
+/// Change password response DTO.
+/// </summary>
+public sealed record ChangePasswordResponse
+{
+    /// <summary>Gets or sets whether the operation succeeded.</summary>
+    public required bool Success { get; init; }
+
+    /// <summary>Gets or sets the new JWT token.</summary>
+    public string? Token { get; init; }
+
+    /// <summary>Gets or sets when the token expires.</summary>
+    public DateTime? ExpiresAt { get; init; }
 }
 
 /// <summary>

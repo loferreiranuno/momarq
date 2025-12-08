@@ -98,9 +98,13 @@ public sealed class AuthService
         user.MustChangePassword = false;
         await _adminUserRepository.UpdateAsync(user, cancellationToken);
 
+        // Generate a new token with mustChangePassword = false
+        var expiresAt = DateTime.UtcNow.AddHours(24);
+        var token = GenerateJwtToken(user.Id, user.Username, false, expiresAt);
+
         _logger.LogInformation("User {Username} changed their password", username);
 
-        return new ChangePasswordResultDto(true);
+        return new ChangePasswordResultDto(true, null, token, expiresAt);
     }
 
     /// <summary>
