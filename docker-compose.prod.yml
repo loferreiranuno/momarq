@@ -1,0 +1,133 @@
+# Production Docker Compose for monmarq.es
+# Uses Traefik for reverse proxy with automatic SSL via Let's Encrypt
+
+services:
+  # Traefik reverse proxy
+  traefik:
+    image: traefik:v3.2
+    container_name: traefik
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./deploy/traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./deploy/traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
+      - letsencrypt_data:/letsencrypt
+    networks:
+      - traefik-public
+    labels:
+      - "traefik.enable=true"
+
+  # PostgreSQL with pgvector
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: visualsearch-postgres
+    environment:
+      POSTGRES_USER: vsuser
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: visualsearch
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vsuser -d visualsearch"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - internal
+
+  # .NET API
+  api:
+    image: ghcr.io/loferreiranuno/momarq/api:latest
+    container_name: visualsearch-api
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ConnectionStrings__DefaultConnection=Host=postgres;Database=visualsearch;Username=vsuser;Password=${DB_PASSWORD}
+      - Jwt__SecretKey=${JWT_SECRET_KEY}
+      - Jwt__Issuer=VisualSearchApi
+      - Jwt__Audience=VisualSearchApp
+      - Uploads__Path=/app/uploads
+    volumes:
+      - uploads_data:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 -O - http://localhost:8080/health > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 150s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
+    restart: unless-stopped
+    networks:
+      - traefik-public
+      - internal
+    labels:
+      - "traefik.enable=true"
+      # API routes
+      - "traefik.http.routers.api.rule=Host(`monmarq.es`) && (PathPrefix(`/api`) || PathPrefix(`/swagger`) || PathPrefix(`/health`))"
+      - "traefik.http.routers.api.entrypoints=websecure"
+      - "traefik.http.routers.api.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.api.middlewares=api-chain@file"
+      - "traefik.http.services.api.loadbalancer.server.port=8080"
+      # SSE route with special middleware (no buffering)
+      - "traefik.http.routers.api-sse.rule=Host(`monmarq.es`) && PathPrefix(`/api/settings/sse`)"
+      - "traefik.http.routers.api-sse.entrypoints=websecure"
+      - "traefik.http.routers.api-sse.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.api-sse.middlewares=sse-chain@file"
+      - "traefik.http.routers.api-sse.priority=100"
+      - "traefik.http.services.api-sse.loadbalancer.server.port=8080"
+      - "traefik.http.services.api-sse.loadbalancer.responseforwarding.flushinterval=1ms"
+
+  # Nginx (frontend static files + uploads)
+  nginx:
+    image: ghcr.io/loferreiranuno/momarq/frontend:latest
+    container_name: visualsearch-nginx
+    volumes:
+      - uploads_data:/app/uploads:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - traefik-public
+    labels:
+      - "traefik.enable=true"
+      # Frontend catch-all route (lower priority than API)
+      - "traefik.http.routers.frontend.rule=Host(`monmarq.es`)"
+      - "traefik.http.routers.frontend.entrypoints=websecure"
+      - "traefik.http.routers.frontend.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.frontend.middlewares=frontend-chain@file"
+      - "traefik.http.routers.frontend.priority=1"
+      - "traefik.http.services.frontend.loadbalancer.server.port=80"
+
+volumes:
+  postgres_data:
+    name: visualsearch-postgres-data
+  uploads_data:
+    name: visualsearch-uploads-data
+  letsencrypt_data:
+    name: traefik-letsencrypt
+
+networks:
+  traefik-public:
+    name: traefik-public
+    driver: bridge
+  internal:
+    name: visualsearch-internal
+    driver: bridge

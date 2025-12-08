@@ -1,0 +1,54 @@
+# Traefik Static Configuration
+# https://doc.traefik.io/traefik/reference/static-configuration/file/
+
+api:
+  dashboard: false  # Disabled for security in production
+
+# Entry points definition
+entryPoints:
+  web:
+    address: ":80"
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+          permanent: true
+  
+  websecure:
+    address: ":443"
+    http:
+      tls:
+        certResolver: letsencrypt
+
+# Docker provider configuration
+providers:
+  docker:
+    endpoint: "unix:///var/run/docker.sock"
+    exposedByDefault: false
+    network: traefik-public
+    watch: true
+  
+  file:
+    filename: /etc/traefik/dynamic.yml
+    watch: true
+
+# Let's Encrypt certificate resolver
+certificatesResolvers:
+  letsencrypt:
+    acme:
+      email: admin@monmarq.es
+      storage: /letsencrypt/acme.json
+      httpChallenge:
+        entryPoint: web
+
+# Logging
+log:
+  level: INFO
+  format: json
+
+accessLog:
+  format: json
+  filters:
+    statusCodes:
+      - "400-599"

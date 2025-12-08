@@ -1,0 +1,63 @@
+# Traefik Dynamic Configuration
+# Middleware and routing rules
+# https://doc.traefik.io/traefik/reference/dynamic-configuration/file/
+
+http:
+  middlewares:
+    # Security headers middleware
+    secure-headers:
+      headers:
+        stsSeconds: 31536000
+        stsIncludeSubdomains: true
+        stsPreload: true
+        forceSTSHeader: true
+        frameDeny: true
+        contentTypeNosniff: true
+        browserXssFilter: true
+        referrerPolicy: "strict-origin-when-cross-origin"
+        customResponseHeaders:
+          X-Powered-By: ""
+          Server: ""
+
+    # Gzip compression middleware
+    compress:
+      compress:
+        excludedContentTypes:
+          - text/event-stream
+
+    # Rate limiting middleware
+    rate-limit:
+      rateLimit:
+        average: 100
+        burst: 50
+        period: 1s
+
+    # SSE (Server-Sent Events) specific configuration
+    # Disables buffering for real-time streaming
+    sse-config:
+      headers:
+        customResponseHeaders:
+          X-Accel-Buffering: "no"
+          Cache-Control: "no-cache"
+
+    # Chain middleware for API routes
+    api-chain:
+      chain:
+        middlewares:
+          - secure-headers
+          - compress
+          - rate-limit
+
+    # Chain middleware for SSE routes
+    sse-chain:
+      chain:
+        middlewares:
+          - secure-headers
+          - sse-config
+
+    # Chain middleware for frontend
+    frontend-chain:
+      chain:
+        middlewares:
+          - secure-headers
+          - compress
