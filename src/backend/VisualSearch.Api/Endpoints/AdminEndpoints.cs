@@ -28,6 +28,19 @@ public static class AdminEndpoints
             .WithName("GetStats")
             .WithDescription("Gets dashboard statistics.");
 
+        // User endpoints
+        group.MapGet("/users", GetUsersAsync)
+            .WithName("GetUsers")
+            .WithDescription("Gets all admin users.");
+
+        group.MapPost("/users", CreateUserAsync)
+            .WithName("CreateUser")
+            .WithDescription("Creates a new admin user.");
+
+        group.MapDelete("/users/{id:int}", DeleteUserAsync)
+            .WithName("DeleteUser")
+            .WithDescription("Deletes an admin user.");
+
         // Provider endpoints
         group.MapGet("/providers", GetProvidersAsync)
             .WithName("GetProviders")
@@ -606,6 +619,39 @@ public static class AdminEndpoints
 
         var result = await productImageService.VectorizeAllAdminAsync(force, cancellationToken);
         return Results.Ok(result);
+    }
+
+    private static async Task<IResult> GetUsersAsync(
+        [FromServices] AuthService authService,
+        CancellationToken cancellationToken)
+    {
+        var users = await authService.GetAllUsersAsync(cancellationToken);
+        return Results.Ok(users);
+    }
+
+    private static async Task<IResult> CreateUserAsync(
+        [FromBody] CreateAdminUserDto request,
+        [FromServices] AuthService authService,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var user = await authService.CreateUserAsync(request, cancellationToken);
+            return Results.Created($"/api/admin/users/{user.Id}", user);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Results.BadRequest(new { Error = ex.Message });
+        }
+    }
+
+    private static async Task<IResult> DeleteUserAsync(
+        int id,
+        [FromServices] AuthService authService,
+        CancellationToken cancellationToken)
+    {
+        await authService.DeleteUserAsync(id, cancellationToken);
+        return Results.NoContent();
     }
 
     // ========== Request DTOs (Admin-specific with ExternalId) ==========

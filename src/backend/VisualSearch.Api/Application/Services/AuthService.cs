@@ -1,8 +1,10 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.IdentityModel.Tokens;
 using VisualSearch.Api.Contracts.DTOs;
+using VisualSearch.Api.Data.Entities;
 using VisualSearch.Api.Domain.Interfaces;
 
 namespace VisualSearch.Api.Application.Services;
@@ -13,17 +15,20 @@ namespace VisualSearch.Api.Application.Services;
 public sealed class AuthService
 {
     private readonly IAdminUserRepository _adminUserRepository;
-    private readonly IConfiguration _configuration;
+    private readonly JwtOptions _jwtOptions;
     private readonly ILogger<AuthService> _logger;
+    private readonly IPasswordHasher<AdminUser> _passwordHasher;
 
     public AuthService(
         IAdminUserRepository adminUserRepository,
-        IConfiguration configuration,
-        ILogger<AuthService> logger)
+        JwtOptions jwtOptions,
+        ILogger<AuthService> logger,
+        IPasswordHasher<AdminUser> passwordHasher)
     {
         _adminUserRepository = adminUserRepository;
-        _configuration = configuration;
+        _jwtOptions = jwtOptions;
         _logger = logger;
+        _passwordHasher = passwordHasher;
     }
 
     /// <summary>
@@ -40,10 +45,23 @@ public sealed class AuthService
         }
 
         var user = await _adminUserRepository.GetByUsernameAsync(username, cancellationToken);
-        if (user is null || !BCrypt.Net.BCrypt.Verify(password, user.PasswordHash))
+        if (user is null)
         {
-            _logger.LogWarning("Failed login attempt for username: {Username}", username);
+            _logger.LogWarning("Failed login attempt for username: {Username} (User not found)", username);
             return null;
+        }
+
+        var verificationResult = _passwordHasher.VerifyHashedPassword(user, user.PasswordHash, password);
+        if (verificationResult == PasswordVerificationResult.Failed)
+        {
+            _logger.LogWarning("Failed login attempt for username: {Username} (Invalid password)", username);
+            return null;
+        }
+
+        if (verificationResult == PasswordVerificationResult.SuccessRehashNeeded)
+        {
+            user.PasswordHash = _passwordHasher.HashPassword(user, password);
+            await _adminUserRepository.UpdateAsync(user, cancellationToken);
         }
 
         // Update last login
@@ -89,12 +107,13 @@ public sealed class AuthService
             return new ChangePasswordResultDto(false, "User not found");
         }
 
-        if (!BCrypt.Net.BCrypt.Verify(currentPassword, user.PasswordHash))
+        var verificationResult = _passwordHasher.VerifyHashedPassword(user, user.PasswordHash, currentPassword);
+        if (verificationResult == PasswordVerificationResult.Failed)
         {
             return new ChangePasswordResultDto(false, "Current password is incorrect");
         }
 
-        user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(newPassword);
+        user.PasswordHash = _passwordHasher.HashPassword(user, newPassword);
         user.MustChangePassword = false;
         await _adminUserRepository.UpdateAsync(user, cancellationToken);
 
@@ -105,6 +124,55 @@ public sealed class AuthService
         _logger.LogInformation("User {Username} changed their password", username);
 
         return new ChangePasswordResultDto(true, null, token, expiresAt);
+    }
+
+    /// <summary>
+    /// Gets all admin users.
+    /// </summary>
+    public async Task<IEnumerable<AdminUserDto>> GetAllUsersAsync(CancellationToken cancellationToken = default)
+    {
+        var users = await _adminUserRepository.GetAllAsync(cancellationToken);
+        return users.Select(u => new AdminUserDto(u.Id, u.Username, u.CreatedAt, u.LastLoginAt));
+    }
+
+    /// <summary>
+    /// Creates a new admin user.
+    /// </summary>
+    public async Task<AdminUserDto> CreateUserAsync(CreateAdminUserDto dto, CancellationToken cancellationToken = default)
+    {
+        var existingUser = await _adminUserRepository.GetByUsernameAsync(dto.Username, cancellationToken);
+        if (existingUser != null)
+        {
+            throw new InvalidOperationException($"User with username '{dto.Username}' already exists.");
+        }
+
+        var user = new AdminUser
+        {
+            Username = dto.Username,
+            PasswordHash = "", // Will be set below
+            MustChangePassword = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        user.PasswordHash = _passwordHasher.HashPassword(user, dto.Password);
+
+        await _adminUserRepository.AddAsync(user, cancellationToken);
+        await _adminUserRepository.SaveChangesAsync(cancellationToken);
+
+        return new AdminUserDto(user.Id, user.Username, user.CreatedAt, user.LastLoginAt);
+    }
+
+    /// <summary>
+    /// Deletes an admin user.
+    /// </summary>
+    public async Task DeleteUserAsync(int id, CancellationToken cancellationToken = default)
+    {
+        var user = await _adminUserRepository.GetByIdAsync(id, cancellationToken);
+        if (user != null)
+        {
+            await _adminUserRepository.DeleteAsync(user, cancellationToken);
+            await _adminUserRepository.SaveChangesAsync(cancellationToken);
+        }
     }
 
     /// <summary>
@@ -125,11 +193,7 @@ public sealed class AuthService
 
     private string GenerateJwtToken(int userId, string username, bool mustChangePassword, DateTime expiresAt)
     {
-        var jwtKey = _configuration["Jwt:Key"] ?? throw new InvalidOperationException("JWT Key not configured");
-        var jwtIssuer = _configuration["Jwt:Issuer"] ?? "VisualSearchApi";
-        var jwtAudience = _configuration["Jwt:Audience"] ?? "VisualSearchClient";
-
-        var securityKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey));
+        var securityKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwtOptions.Key));
         var credentials = new SigningCredentials(securityKey, SecurityAlgorithms.HmacSha256);
 
         var claims = new[]
@@ -143,8 +207,8 @@ public sealed class AuthService
         };
 
         var token = new JwtSecurityToken(
-            issuer: jwtIssuer,
-            audience: jwtAudience,
+            issuer: _jwtOptions.Issuer,
+            audience: _jwtOptions.Audience,
             claims: claims,
             expires: expiresAt,
             signingCredentials: credentials

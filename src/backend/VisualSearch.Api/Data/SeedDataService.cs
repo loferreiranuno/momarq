@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using VisualSearch.Api.Data.Entities;
 
@@ -28,9 +29,10 @@ public class SeedDataService : IHostedService
     {
         using var scope = _serviceProvider.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<VisualSearchDbContext>();
+        var passwordHasher = scope.ServiceProvider.GetRequiredService<IPasswordHasher<AdminUser>>();
 
         // Apply migrations with retry logic
-        _logger.LogInformation("Applying database migrations...");
+        _logger.LogDebug("Applying database migrations...");
         
         var maxRetries = 5;
         var retryDelay = TimeSpan.FromSeconds(5);
@@ -40,7 +42,7 @@ public class SeedDataService : IHostedService
             try
             {
                 await dbContext.Database.MigrateAsync(cancellationToken);
-                _logger.LogInformation("Database migrations applied successfully.");
+                _logger.LogDebug("Database migrations applied successfully.");
                 break;
             }
             catch (Exception ex) when (i < maxRetries - 1)
@@ -77,7 +79,7 @@ public class SeedDataService : IHostedService
         _logger.LogInformation("Seeding database with initial data...");
         
         await SeedSettingsAsync(dbContext, cancellationToken);
-        await SeedAdminUserAsync(dbContext, cancellationToken);
+        await SeedAdminUserAsync(dbContext, passwordHasher, cancellationToken);
         await SeedProvidersAsync(dbContext, cancellationToken);
 
         _logger.LogInformation("Database seeding completed.");
@@ -159,7 +161,7 @@ public class SeedDataService : IHostedService
         _logger.LogInformation("Seeded {Count} default settings", defaultSettings.Count);
     }
 
-    private async Task SeedAdminUserAsync(VisualSearchDbContext dbContext, CancellationToken cancellationToken)
+    private async Task SeedAdminUserAsync(VisualSearchDbContext dbContext, IPasswordHasher<AdminUser> passwordHasher, CancellationToken cancellationToken)
     {
         if (await dbContext.AdminUsers.AnyAsync(cancellationToken))
         {
@@ -171,9 +173,11 @@ public class SeedDataService : IHostedService
         var adminUser = new AdminUser
         {
             Username = "admin",
-            PasswordHash = BCrypt.Net.BCrypt.HashPassword("admin123!"),
+            PasswordHash = "", // Will be set below
             MustChangePassword = true
         };
+
+        adminUser.PasswordHash = passwordHasher.HashPassword(adminUser, "admin123!");
 
         dbContext.AdminUsers.Add(adminUser);
         await dbContext.SaveChangesAsync(cancellationToken);

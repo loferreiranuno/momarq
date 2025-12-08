@@ -1,6 +1,8 @@
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using VisualSearch.Api.Application.Services;
 using VisualSearch.Api.Data;
+using VisualSearch.Api.Data.Entities;
 using VisualSearch.Api.Domain.Interfaces;
 using VisualSearch.Api.Infrastructure.Repositories;
 using VisualSearch.Api.Services;
@@ -55,6 +57,7 @@ public static class ServiceCollectionExtensions
     /// </summary>
     public static IServiceCollection AddApplicationServices(this IServiceCollection services)
     {
+        services.AddScoped<IPasswordHasher<AdminUser>, PasswordHasher<AdminUser>>();
         services.AddScoped<CategoryService>();
         services.AddScoped<ProviderService>();
         services.AddScoped<ProductService>();

@@ -24,15 +24,4 @@ public sealed class AdminUserRepository : RepositoryBase<AdminUser, int>, IAdmin
         return await DbSet
             .FirstOrDefaultAsync(u => u.Username.ToLower() == username.ToLower(), cancellationToken);
     }
-
-    public async Task<bool> ValidateCredentialsAsync(string username, string password, CancellationToken cancellationToken = default)
-    {
-        var user = await GetByUsernameAsync(username, cancellationToken);
-        if (user is null)
-        {
-            return false;
-        }
-
-        return BCrypt.Net.BCrypt.Verify(password, user.PasswordHash);
-    }
 }

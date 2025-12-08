@@ -25,7 +25,10 @@ public sealed record JwtOptions
         var options = new JwtOptions();
         configuration.GetSection("Jwt").Bind(options);
 
-        var key = string.IsNullOrWhiteSpace(configuration["Jwt:Key"]) ? options.Key : configuration["Jwt:Key"] ?? string.Empty;
+        // Support both Jwt:Key and Jwt:SecretKey (common production override)
+        var configKey = configuration["Jwt:Key"] ?? configuration["Jwt:SecretKey"];
+        var key = string.IsNullOrWhiteSpace(configKey) ? options.Key : configKey;
+        
         var issuer = string.IsNullOrWhiteSpace(configuration["Jwt:Issuer"]) ? options.Issuer : configuration["Jwt:Issuer"] ?? DefaultIssuer;
         var audience = string.IsNullOrWhiteSpace(configuration["Jwt:Audience"]) ? options.Audience : configuration["Jwt:Audience"] ?? DefaultAudience;
 
