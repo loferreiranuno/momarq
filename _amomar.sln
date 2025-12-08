@@ -6,7 +6,11 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{827E0CD3-B72
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "backend", "backend", "{FE360695-3F2B-1049-3887-35FBB5135923}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}"
+EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VisualSearch.Api", "src\backend\VisualSearch.Api\VisualSearch.Api.csproj", "{3C766ABE-8D75-BA54-7495-3C8EDDEEB676}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VisualSearch.Api.Tests", "tests\VisualSearch.Api.Tests\VisualSearch.Api.Tests.csproj", "{B2C3D4E5-F6A7-8901-BCDE-F23456789012}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -18,6 +22,10 @@ Global
 		{3C766ABE-8D75-BA54-7495-3C8EDDEEB676}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{3C766ABE-8D75-BA54-7495-3C8EDDEEB676}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{3C766ABE-8D75-BA54-7495-3C8EDDEEB676}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B2C3D4E5-F6A7-8901-BCDE-F23456789012}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B2C3D4E5-F6A7-8901-BCDE-F23456789012}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B2C3D4E5-F6A7-8901-BCDE-F23456789012}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B2C3D4E5-F6A7-8901-BCDE-F23456789012}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -25,6 +33,7 @@ Global
 	GlobalSection(NestedProjects) = preSolution
 		{FE360695-3F2B-1049-3887-35FBB5135923} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{3C766ABE-8D75-BA54-7495-3C8EDDEEB676} = {FE360695-3F2B-1049-3887-35FBB5135923}
+		{B2C3D4E5-F6A7-8901-BCDE-F23456789012} = {A1B2C3D4-E5F6-7890-ABCD-EF1234567890}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {3D4277E1-1837-477A-9E42-0149F1AB125B}

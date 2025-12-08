@@ -1,5 +1,6 @@
-using Microsoft.EntityFrameworkCore;
-using VisualSearch.Api.Data;
+using Microsoft.AspNetCore.Mvc;
+using VisualSearch.Api.Application.Services;
+using VisualSearch.Api.Contracts.DTOs;
 
 namespace VisualSearch.Api.Endpoints;
 
@@ -18,6 +19,7 @@ public static class CategoriesEndpoints
             .WithTags("Categories");
 
         group.MapGet("/", GetCategoriesAsync)
+            .Produces<IEnumerable<CategorySummaryDto>>()
             .WithName("GetPublicCategories")
             .WithDescription("Gets all categories. Optionally filter by detection enabled status.");
     }
@@ -26,39 +28,11 @@ public static class CategoriesEndpoints
     /// Gets all categories with optional filtering.
     /// </summary>
     private static async Task<IResult> GetCategoriesAsync(
-        VisualSearchDbContext dbContext,
-        [Microsoft.AspNetCore.Mvc.FromQuery] bool? detectionEnabled = null,
+        CategoryService categoryService,
+        [FromQuery] bool? detectionEnabled = null,
         CancellationToken cancellationToken = default)
     {
-        var query = dbContext.Categories.AsQueryable();
-
-        if (detectionEnabled.HasValue)
-        {
-            query = query.Where(c => c.DetectionEnabled == detectionEnabled.Value);
-        }
-
-        var categories = await query
-            .OrderBy(c => c.Name)
-            .Select(c => new CategoryResponse
-            {
-                Id = c.Id,
-                Name = c.Name,
-                CocoClassId = c.CocoClassId,
-                DetectionEnabled = c.DetectionEnabled
-            })
-            .ToListAsync(cancellationToken);
-
+        var categories = await categoryService.GetCategoriesAsync(detectionEnabled, cancellationToken);
         return Results.Ok(categories);
-    }
-
-    /// <summary>
-    /// Response DTO for category data.
-    /// </summary>
-    private sealed class CategoryResponse
-    {
-        public int Id { get; set; }
-        public required string Name { get; set; }
-        public int CocoClassId { get; set; }
-        public bool DetectionEnabled { get; set; }
     }
 }

@@ -61,6 +61,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<DashboardService>();
         services.AddScoped<AuthService>();
         services.AddScoped<VisualSearchService>();
+        services.AddScoped<IProductImageService, ProductImageService>();
 
         return services;
     }

@@ -278,6 +278,61 @@ docker image prune -f
 | `search.jpegQuality` | JPEG compression quality | `85` |
 | `search.maxResults` | Max search results | `20` |
 
+## Testing
+
+### Running Tests
+
+The project includes integration tests using **xUnit**, **Testcontainers** (PostgreSQL with pgvector), and **FluentAssertions**.
+
+```bash
+# Run all tests
+dotnet test
+
+# Run with coverage
+dotnet test --collect:"XPlat Code Coverage"
+
+# Run specific test file
+dotnet test --filter "FullyQualifiedName~AuthFlowTests"
+```
+
+### Test Structure
+
+```
+tests/
+└── VisualSearch.Api.Tests/
+    ├── Fixtures/
+    │   ├── PostgresContainerFixture.cs  # Testcontainers PostgreSQL
+    │   └── WebApplicationFixture.cs     # WebApplicationFactory
+    └── Integration/
+        ├── IntegrationTestBase.cs       # Base class with auth helpers
+        ├── AuthFlowTests.cs             # Login, change password tests
+        └── AdminCrudTests.cs            # Provider, product, category CRUD
+```
+
+## Architecture Compliance
+
+### Current Status
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| `AuthEndpoints` | ✅ Compliant | Uses `AuthService` |
+| `CategoriesEndpoints` | ✅ Compliant | Uses `CategoryService` |
+| `ImageSearchEndpoints` | ✅ Compliant | Uses `VisualSearchService` |
+| `SettingsEndpoints` | ✅ Compliant | Uses `SettingsService` |
+| `AdminEndpoints` | ⚠️ Technical Debt | Direct DbContext access (28 violations) |
+
+### Technical Debt
+
+**AdminEndpoints.cs** (1371 lines) contains direct database access instead of using the existing Application Services. The required services already exist:
+
+- `ProviderService` - Provider CRUD operations
+- `ProductService` - Product CRUD with pagination
+- `CategoryService` - Category management
+- `ProductImageService` - Image upload and vectorization
+- `DashboardService` - Statistics and system status
+
+**Priority**: Medium - The code works correctly but violates Clean Architecture principles. Integration tests ensure behavioral correctness.
+
 ## Project Structure
 
 ```

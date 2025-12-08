@@ -27,6 +27,14 @@ public sealed class CategoryRepository : RepositoryBase<Category, int>, ICategor
             .ToListAsync(cancellationToken);
     }
 
+    public async Task<IEnumerable<Category>> GetByDetectionEnabledAsync(bool enabled, CancellationToken cancellationToken = default)
+    {
+        return await DbSet
+            .Where(c => c.DetectionEnabled == enabled)
+            .OrderBy(c => c.Name)
+            .ToListAsync(cancellationToken);
+    }
+
     public async Task<Category?> GetByCocoClassIdAsync(int cocoClassId, CancellationToken cancellationToken = default)
     {
         return await DbSet

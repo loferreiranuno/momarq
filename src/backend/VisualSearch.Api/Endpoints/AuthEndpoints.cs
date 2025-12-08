@@ -1,10 +1,5 @@
-using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
-using System.Text;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.IdentityModel.Tokens;
-using VisualSearch.Api.Data;
-using VisualSearch.Api.Data.Entities;
+using VisualSearch.Api.Application.Services;
 
 namespace VisualSearch.Api.Endpoints;
 
@@ -24,6 +19,7 @@ public static class AuthEndpoints
 
         group.MapPost("/login", HandleLoginAsync)
             .Produces<LoginResponse>(200)
+            .Produces(400)
             .Produces(401)
             .WithName("Login")
             .WithDescription("Authenticates an admin user and returns a JWT token.");
@@ -46,133 +42,65 @@ public static class AuthEndpoints
 
     private static async Task<IResult> HandleLoginAsync(
         LoginRequest request,
-        VisualSearchDbContext dbContext,
-        JwtOptions jwtOptions,
-        ILogger<Program> logger,
+        AuthService authService,
         CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(request.Username) || string.IsNullOrWhiteSpace(request.Password))
-        {
-            return Results.BadRequest(new { error = "Username and password are required" });
-        }
+        var result = await authService.LoginAsync(request.Username, request.Password, cancellationToken);
 
-        var user = await dbContext.AdminUsers
-            .FirstOrDefaultAsync(u => u.Username == request.Username, cancellationToken);
-
-        if (user is null || !BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash))
+        if (result is null)
         {
-            logger.LogWarning("Failed login attempt for username: {Username}", request.Username);
             return Results.Unauthorized();
         }
 
-        // Update last login
-        user.LastLoginAt = DateTime.UtcNow;
-        await dbContext.SaveChangesAsync(cancellationToken);
-
-        // Generate JWT token
-        var token = GenerateJwtToken(user, jwtOptions);
-
-        logger.LogInformation("User {Username} logged in successfully", request.Username);
-
         return Results.Ok(new LoginResponse
         {
-            Token = token,
-            Username = user.Username,
-            MustChangePassword = user.MustChangePassword,
-            ExpiresAt = DateTime.UtcNow.AddHours(24)
+            Token = result.Token,
+            Username = result.Username,
+            MustChangePassword = result.MustChangePassword,
+            ExpiresAt = result.ExpiresAt
         });
     }
 
     private static async Task<IResult> HandleChangePasswordAsync(
         ChangePasswordRequest request,
         ClaimsPrincipal user,
-        VisualSearchDbContext dbContext,
-        ILogger<Program> logger,
+        AuthService authService,
         CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(request.CurrentPassword) || string.IsNullOrWhiteSpace(request.NewPassword))
-        {
-            return Results.BadRequest(new { error = "Current and new passwords are required" });
-        }
-
-        if (request.NewPassword.Length < 8)
-        {
-            return Results.BadRequest(new { error = "New password must be at least 8 characters" });
-        }
-
         var username = user.FindFirst(ClaimTypes.Name)?.Value;
-
         if (username is null)
         {
             return Results.Unauthorized();
         }
 
-        var adminUser = await dbContext.AdminUsers
-            .FirstOrDefaultAsync(u => u.Username == username, cancellationToken);
+        var result = await authService.ChangePasswordAsync(
+            username,
+            request.CurrentPassword,
+            request.NewPassword,
+            cancellationToken);
 
-        if (adminUser is null)
+        if (!result.Success)
         {
-            return Results.Unauthorized();
+            return Results.BadRequest(new { error = result.ErrorMessage });
         }
-
-        if (!BCrypt.Net.BCrypt.Verify(request.CurrentPassword, adminUser.PasswordHash))
-        {
-            return Results.BadRequest(new { error = "Current password is incorrect" });
-        }
-
-        adminUser.PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.NewPassword);
-        adminUser.MustChangePassword = false;
-
-        await dbContext.SaveChangesAsync(cancellationToken);
-
-        logger.LogInformation("User {Username} changed their password", username);
 
         return Results.Ok(new { message = "Password changed successfully" });
     }
 
     private static IResult HandleGetCurrentUserAsync(ClaimsPrincipal user)
     {
-        var username = user.FindFirst(ClaimTypes.Name)?.Value;
-        var mustChangePassword = user.FindFirst("must_change_password")?.Value == "true";
+        var currentUser = AuthService.GetCurrentUser(user);
 
-        if (username is null)
+        if (currentUser is null)
         {
             return Results.Unauthorized();
         }
 
         return Results.Ok(new CurrentUserResponse
         {
-            Username = username,
-            MustChangePassword = mustChangePassword
+            Username = currentUser.Username,
+            MustChangePassword = currentUser.MustChangePassword
         });
-    }
-
-    private static string GenerateJwtToken(AdminUser user, JwtOptions jwtOptions)
-    {
-        if (string.IsNullOrWhiteSpace(jwtOptions.Key))
-        {
-            throw new InvalidOperationException("JWT key not configured. Set Jwt:Key in configuration or environment variables.");
-        }
-
-        var securityKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtOptions.Key));
-        var credentials = new SigningCredentials(securityKey, SecurityAlgorithms.HmacSha256);
-
-        var claims = new[]
-        {
-            new Claim(ClaimTypes.Name, user.Username),
-            new Claim(ClaimTypes.Role, "Admin"),
-            new Claim("must_change_password", user.MustChangePassword.ToString().ToLowerInvariant()),
-            new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
-        };
-
-        var token = new JwtSecurityToken(
-            issuer: jwtOptions.Issuer,
-            audience: jwtOptions.Audience,
-            claims: claims,
-            expires: DateTime.UtcNow.AddHours(24),
-            signingCredentials: credentials);
-
-        return new JwtSecurityTokenHandler().WriteToken(token);
     }
 }
 

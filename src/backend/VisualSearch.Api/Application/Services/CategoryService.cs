@@ -23,6 +23,20 @@ public sealed class CategoryService
         return categories.Select(MapToDto);
     }
 
+    /// <summary>
+    /// Gets categories with optional detection enabled filter.
+    /// </summary>
+    public async Task<IEnumerable<CategorySummaryDto>> GetCategoriesAsync(bool? detectionEnabled = null, CancellationToken cancellationToken = default)
+    {
+        var categories = detectionEnabled.HasValue
+            ? await _categoryRepository.GetByDetectionEnabledAsync(detectionEnabled.Value, cancellationToken)
+            : await _categoryRepository.GetAllAsync(cancellationToken);
+
+        return categories
+            .OrderBy(c => c.Name)
+            .Select(c => new CategorySummaryDto(c.Id, c.Name, c.CocoClassId, c.DetectionEnabled));
+    }
+
     public async Task<IEnumerable<CategorySummaryDto>> GetEnabledCategoriesAsync(CancellationToken cancellationToken = default)
     {
         var categories = await _categoryRepository.GetEnabledForDetectionAsync(cancellationToken);

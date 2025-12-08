@@ -2,6 +2,7 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
 using Microsoft.IdentityModel.Tokens;
+using VisualSearch.Api.Contracts.DTOs;
 using VisualSearch.Api.Domain.Interfaces;
 
 namespace VisualSearch.Api.Application.Services;
@@ -13,54 +14,112 @@ public sealed class AuthService
 {
     private readonly IAdminUserRepository _adminUserRepository;
     private readonly IConfiguration _configuration;
+    private readonly ILogger<AuthService> _logger;
 
     public AuthService(
         IAdminUserRepository adminUserRepository,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        ILogger<AuthService> logger)
     {
         _adminUserRepository = adminUserRepository;
         _configuration = configuration;
+        _logger = logger;
     }
 
-    public async Task<string?> AuthenticateAsync(string username, string password, CancellationToken cancellationToken = default)
+    /// <summary>
+    /// Authenticates a user and returns login result with JWT token.
+    /// </summary>
+    public async Task<LoginResultDto?> LoginAsync(
+        string username, 
+        string password, 
+        CancellationToken cancellationToken = default)
     {
-        var isValid = await _adminUserRepository.ValidateCredentialsAsync(username, password, cancellationToken);
-        if (!isValid)
+        if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password))
         {
             return null;
         }
 
         var user = await _adminUserRepository.GetByUsernameAsync(username, cancellationToken);
+        if (user is null || !BCrypt.Net.BCrypt.Verify(password, user.PasswordHash))
+        {
+            _logger.LogWarning("Failed login attempt for username: {Username}", username);
+            return null;
+        }
+
+        // Update last login
+        user.LastLoginAt = DateTime.UtcNow;
+        await _adminUserRepository.UpdateAsync(user, cancellationToken);
+
+        // Generate JWT token
+        var expiresAt = DateTime.UtcNow.AddHours(24);
+        var token = GenerateJwtToken(user.Id, user.Username, user.MustChangePassword, expiresAt);
+
+        _logger.LogInformation("User {Username} logged in successfully", username);
+
+        return new LoginResultDto(
+            Token: token,
+            Username: user.Username,
+            MustChangePassword: user.MustChangePassword,
+            ExpiresAt: expiresAt
+        );
+    }
+
+    /// <summary>
+    /// Changes a user's password.
+    /// </summary>
+    public async Task<ChangePasswordResultDto> ChangePasswordAsync(
+        string username,
+        string currentPassword,
+        string newPassword,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(currentPassword) || string.IsNullOrWhiteSpace(newPassword))
+        {
+            return new ChangePasswordResultDto(false, "Current and new passwords are required");
+        }
+
+        if (newPassword.Length < 8)
+        {
+            return new ChangePasswordResultDto(false, "New password must be at least 8 characters");
+        }
+
+        var user = await _adminUserRepository.GetByUsernameAsync(username, cancellationToken);
         if (user is null)
+        {
+            return new ChangePasswordResultDto(false, "User not found");
+        }
+
+        if (!BCrypt.Net.BCrypt.Verify(currentPassword, user.PasswordHash))
+        {
+            return new ChangePasswordResultDto(false, "Current password is incorrect");
+        }
+
+        user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(newPassword);
+        user.MustChangePassword = false;
+        await _adminUserRepository.UpdateAsync(user, cancellationToken);
+
+        _logger.LogInformation("User {Username} changed their password", username);
+
+        return new ChangePasswordResultDto(true);
+    }
+
+    /// <summary>
+    /// Gets current user information from claims.
+    /// </summary>
+    public static CurrentUserDto? GetCurrentUser(ClaimsPrincipal principal)
+    {
+        var username = principal.FindFirst(ClaimTypes.Name)?.Value;
+        if (username is null)
         {
             return null;
         }
 
-        return GenerateJwtToken(user.Id, user.Username);
+        var mustChangePassword = principal.FindFirst("must_change_password")?.Value == "true";
+
+        return new CurrentUserDto(username, mustChangePassword);
     }
 
-    public async Task<bool> ChangePasswordAsync(int userId, string currentPassword, string newPassword, CancellationToken cancellationToken = default)
-    {
-        var user = await _adminUserRepository.GetByIdAsync(userId, cancellationToken);
-        if (user is null)
-        {
-            return false;
-        }
-
-        // Verify current password
-        if (!BCrypt.Net.BCrypt.Verify(currentPassword, user.PasswordHash))
-        {
-            return false;
-        }
-
-        // Update password
-        user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(newPassword);
-        await _adminUserRepository.UpdateAsync(user, cancellationToken);
-
-        return true;
-    }
-
-    private string GenerateJwtToken(int userId, string username)
+    private string GenerateJwtToken(int userId, string username, bool mustChangePassword, DateTime expiresAt)
     {
         var jwtKey = _configuration["Jwt:Key"] ?? throw new InvalidOperationException("JWT Key not configured");
         var jwtIssuer = _configuration["Jwt:Issuer"] ?? "VisualSearchApi";
@@ -75,6 +134,7 @@ public sealed class AuthService
             new Claim(JwtRegisteredClaimNames.UniqueName, username),
             new Claim(ClaimTypes.Name, username),
             new Claim(ClaimTypes.Role, "Admin"),
+            new Claim("must_change_password", mustChangePassword.ToString().ToLowerInvariant()),
             new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
         };
 
@@ -82,7 +142,7 @@ public sealed class AuthService
             issuer: jwtIssuer,
             audience: jwtAudience,
             claims: claims,
-            expires: DateTime.UtcNow.AddHours(24),
+            expires: expiresAt,
             signingCredentials: credentials
         );
 
