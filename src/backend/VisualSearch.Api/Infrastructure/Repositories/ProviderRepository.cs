@@ -48,4 +48,12 @@ public sealed class ProviderRepository : RepositoryBase<Provider, int>, IProvide
             .OrderBy(p => p.Name)
             .ToListAsync(cancellationToken);
     }
+
+    public async Task<Provider?> GetWithProductsAndImagesAsync(int id, CancellationToken cancellationToken = default)
+    {
+        return await DbSet
+            .Include(p => p.Products)
+                .ThenInclude(pr => pr.Images)
+            .FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
+    }
 }

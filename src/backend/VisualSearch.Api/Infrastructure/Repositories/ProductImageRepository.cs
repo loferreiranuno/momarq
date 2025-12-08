@@ -186,4 +186,22 @@ public sealed class ProductImageRepository : RepositoryBase<ProductImage, int>, 
     {
         return await DbSet.CountAsync(cancellationToken);
     }
+
+    public async Task<int> GetVectorizedCountAsync(CancellationToken cancellationToken = default)
+    {
+        return await DbSet.CountAsync(i => i.Embedding != null, cancellationToken);
+    }
+
+    public async Task<ProductImage?> GetByIdAndProductAsync(int imageId, int productId, CancellationToken cancellationToken = default)
+    {
+        return await DbSet
+            .FirstOrDefaultAsync(i => i.Id == imageId && i.ProductId == productId, cancellationToken);
+    }
+
+    public async Task ClearPrimaryImagesAsync(int productId, CancellationToken cancellationToken = default)
+    {
+        await DbSet
+            .Where(i => i.ProductId == productId && i.IsPrimary)
+            .ExecuteUpdateAsync(s => s.SetProperty(i => i.IsPrimary, false), cancellationToken);
+    }
 }

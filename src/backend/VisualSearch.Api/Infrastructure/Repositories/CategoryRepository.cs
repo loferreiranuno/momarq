@@ -63,4 +63,31 @@ public sealed class CategoryRepository : RepositoryBase<Category, int>, ICategor
             .OrderBy(c => c.Name)
             .ToListAsync(cancellationToken);
     }
+
+    public async Task<Category?> GetWithProductsAsync(int id, CancellationToken cancellationToken = default)
+    {
+        return await DbSet
+            .Include(c => c.Products)
+            .FirstOrDefaultAsync(c => c.Id == id, cancellationToken);
+    }
+
+    public async Task<IEnumerable<(Category Category, int ProductCount)>> GetAllWithProductCountsAsync(CancellationToken cancellationToken = default)
+    {
+        var results = await DbSet
+            .OrderBy(c => c.Name)
+            .Select(c => new { Category = c, ProductCount = c.Products.Count })
+            .ToListAsync(cancellationToken);
+
+        return results.Select(r => (r.Category, r.ProductCount));
+    }
+
+    public async Task<(Category? Category, int ProductCount)> GetByIdWithProductCountAsync(int id, CancellationToken cancellationToken = default)
+    {
+        var result = await DbSet
+            .Where(c => c.Id == id)
+            .Select(c => new { Category = c, ProductCount = c.Products.Count })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        return result is null ? (null, 0) : (result.Category, result.ProductCount);
+    }
 }

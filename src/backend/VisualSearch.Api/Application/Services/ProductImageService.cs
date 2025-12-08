@@ -433,4 +433,334 @@ public sealed class ProductImageService : IProductImageService
             CreatedAt: image.CreatedAt
         );
     }
+
+    private static AdminProductImageDto MapToAdminDto(ProductImage image)
+    {
+        return new AdminProductImageDto
+        {
+            Id = image.Id,
+            ImageUrl = image.ImageUrl,
+            LocalPath = image.LocalPath,
+            IsLocalFile = image.LocalPath is not null,
+            IsPrimary = image.IsPrimary,
+            HasEmbedding = image.Embedding is not null,
+            CreatedAt = image.CreatedAt
+        };
+    }
+
+    /// <inheritdoc />
+    public bool IsVectorizationAvailable => _vectorizationService.IsAvailable;
+
+    /// <inheritdoc />
+    public async Task<AdminProductImageDto> AddFromUrlWithVectorizationAsync(
+        int productId,
+        string imageUrl,
+        bool isPrimary = false,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(imageUrl);
+
+        if (!await _productRepository.ExistsAsync(productId, cancellationToken))
+        {
+            throw new InvalidOperationException($"Product with ID {productId} not found.");
+        }
+
+        // If this is the primary image, clear other primaries
+        if (isPrimary)
+        {
+            await _imageRepository.ClearPrimaryImagesAsync(productId, cancellationToken);
+        }
+
+        // Generate embedding if available
+        float[]? embedding = null;
+        if (_vectorizationService.IsAvailable)
+        {
+            embedding = await _vectorizationService.GenerateEmbeddingFromUrlAsync(imageUrl, cancellationToken);
+            if (embedding is null)
+            {
+                _logger.LogWarning("Failed to generate embedding for image URL: {ImageUrl}", imageUrl);
+            }
+        }
+
+        var image = new ProductImage
+        {
+            ProductId = productId,
+            ImageUrl = imageUrl,
+            Embedding = embedding is not null ? new Vector(embedding) : null,
+            IsPrimary = isPrimary,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        await _imageRepository.AddAsync(image, cancellationToken);
+
+        _logger.LogInformation("Added image from URL for product {ProductId}: {ImageUrl}, HasEmbedding: {HasEmbedding}",
+            productId, imageUrl, embedding is not null);
+
+        return MapToAdminDto(image);
+    }
+
+    /// <inheritdoc />
+    public async Task<AdminProductImageDto> UploadWithVectorizationAsync(
+        int productId,
+        Stream imageStream,
+        string fileName,
+        bool isPrimary = false,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(imageStream);
+        ArgumentNullException.ThrowIfNull(fileName);
+
+        if (!await _productRepository.ExistsAsync(productId, cancellationToken))
+        {
+            throw new InvalidOperationException($"Product with ID {productId} not found.");
+        }
+
+        // If this is the primary image, clear other primaries
+        if (isPrimary)
+        {
+            await _imageRepository.ClearPrimaryImagesAsync(productId, cancellationToken);
+        }
+
+        // Save the image to local storage
+        var (relativePath, imageBytes) = await _uploadService.SaveImageAsync(imageStream, fileName, cancellationToken);
+
+        // Generate embedding if available
+        float[]? embedding = null;
+        if (_vectorizationService.IsAvailable)
+        {
+            embedding = await _vectorizationService.GenerateEmbeddingAsync(imageBytes, cancellationToken);
+            if (embedding is null)
+            {
+                _logger.LogWarning("Failed to generate embedding for uploaded image");
+            }
+        }
+
+        var image = new ProductImage
+        {
+            ProductId = productId,
+            ImageUrl = $"/uploads/{relativePath}",
+            LocalPath = relativePath,
+            Embedding = embedding is not null ? new Vector(embedding) : null,
+            IsPrimary = isPrimary,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        await _imageRepository.AddAsync(image, cancellationToken);
+
+        _logger.LogInformation("Uploaded image for product {ProductId}: {LocalPath}, HasEmbedding: {HasEmbedding}",
+            productId, relativePath, embedding is not null);
+
+        return MapToAdminDto(image);
+    }
+
+    /// <inheritdoc />
+    public async Task<AdminProductImageDto> DownloadAndSaveWithVectorizationAsync(
+        int productId,
+        string imageUrl,
+        bool isPrimary = false,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(imageUrl);
+
+        if (!await _productRepository.ExistsAsync(productId, cancellationToken))
+        {
+            throw new InvalidOperationException($"Product with ID {productId} not found.");
+        }
+
+        if (!Uri.TryCreate(imageUrl, UriKind.Absolute, out var uri) ||
+            (uri.Scheme != "http" && uri.Scheme != "https"))
+        {
+            throw new ArgumentException("Invalid image URL.", nameof(imageUrl));
+        }
+
+        // Download image from URL
+        using var httpClient = _httpClientFactory.CreateClient("ImageDownload");
+        httpClient.Timeout = TimeSpan.FromSeconds(30);
+
+        byte[] imageBytes;
+        string? contentType = null;
+        try
+        {
+            using var response = await httpClient.GetAsync(uri, cancellationToken);
+            response.EnsureSuccessStatusCode();
+            contentType = response.Content.Headers.ContentType?.MediaType?.ToLowerInvariant();
+            imageBytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to download image from {ImageUrl}", imageUrl);
+            throw new InvalidOperationException($"Failed to download image from URL: {imageUrl}", ex);
+        }
+
+        // Generate filename from URL
+        var filename = Path.GetFileName(uri.LocalPath);
+        if (string.IsNullOrWhiteSpace(filename) || !filename.Contains('.'))
+        {
+            var extension = contentType?.Replace("image/", "") ?? "jpg";
+            if (extension == "jpeg") extension = "jpg";
+            filename = $"downloaded-{Guid.NewGuid():N}.{extension}";
+        }
+
+        // If this is the primary image, clear other primaries
+        if (isPrimary)
+        {
+            await _imageRepository.ClearPrimaryImagesAsync(productId, cancellationToken);
+        }
+
+        // Save to local storage
+        var (relativePath, processedBytes) = await _uploadService.SaveImageBytesAsync(imageBytes, filename, cancellationToken);
+
+        // Generate embedding if available
+        float[]? embedding = null;
+        if (_vectorizationService.IsAvailable)
+        {
+            embedding = await _vectorizationService.GenerateEmbeddingAsync(processedBytes, cancellationToken);
+            if (embedding is null)
+            {
+                _logger.LogWarning("Failed to generate embedding for downloaded image from {Url}", imageUrl);
+            }
+        }
+
+        var image = new ProductImage
+        {
+            ProductId = productId,
+            ImageUrl = $"/uploads/{relativePath}",
+            LocalPath = relativePath,
+            Embedding = embedding is not null ? new Vector(embedding) : null,
+            IsPrimary = isPrimary,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        await _imageRepository.AddAsync(image, cancellationToken);
+
+        _logger.LogInformation("Downloaded and saved image for product {ProductId} from {OriginalUrl} to {LocalPath}, HasEmbedding: {HasEmbedding}",
+            productId, imageUrl, relativePath, embedding is not null);
+
+        return MapToAdminDto(image);
+    }
+
+    /// <inheritdoc />
+    public async Task<AdminProductImageDto?> UpdateWithUrlChangeAsync(
+        int productId,
+        int imageId,
+        string? imageUrl,
+        bool? isPrimary,
+        CancellationToken cancellationToken = default)
+    {
+        var image = await _imageRepository.GetByIdAndProductAsync(imageId, productId, cancellationToken);
+        if (image is null)
+        {
+            return null;
+        }
+
+        var urlChanged = false;
+
+        if (!string.IsNullOrWhiteSpace(imageUrl) && imageUrl != image.ImageUrl)
+        {
+            image.ImageUrl = imageUrl;
+            urlChanged = true;
+        }
+
+        if (isPrimary.HasValue)
+        {
+            if (isPrimary.Value && !image.IsPrimary)
+            {
+                await _imageRepository.ClearPrimaryImagesAsync(productId, cancellationToken);
+            }
+            image.IsPrimary = isPrimary.Value;
+        }
+
+        // Re-vectorize if URL changed
+        if (urlChanged && _vectorizationService.IsAvailable)
+        {
+            var embedding = await _vectorizationService.GenerateEmbeddingFromUrlAsync(image.ImageUrl, cancellationToken);
+            if (embedding is not null)
+            {
+                image.Embedding = new Vector(embedding);
+                _logger.LogInformation("Re-vectorized image {ImageId} after URL change", imageId);
+            }
+            else
+            {
+                _logger.LogWarning("Failed to re-vectorize image {ImageId}", imageId);
+            }
+        }
+
+        await _imageRepository.UpdateAsync(image, cancellationToken);
+
+        return MapToAdminDto(image);
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> DeleteByProductAsync(int productId, int imageId, CancellationToken cancellationToken = default)
+    {
+        var image = await _imageRepository.GetByIdAndProductAsync(imageId, productId, cancellationToken);
+        if (image is null)
+        {
+            return false;
+        }
+
+        // Delete local file if exists
+        if (!string.IsNullOrWhiteSpace(image.LocalPath))
+        {
+            _uploadService.DeleteImage(image.LocalPath);
+        }
+
+        await _imageRepository.DeleteAsync(image, cancellationToken);
+
+        _logger.LogInformation("Deleted image {ImageId} for product {ProductId}", imageId, productId);
+
+        return true;
+    }
+
+    /// <inheritdoc />
+    public async Task<AllVectorizationResultDto> VectorizeAllAdminAsync(bool force = false, CancellationToken cancellationToken = default)
+    {
+        if (!_vectorizationService.IsAvailable)
+        {
+            throw new InvalidOperationException("Vectorization is not available. CLIP model not loaded.");
+        }
+
+        // Get all images
+        var productIds = await GetAllProductIdsAsync(cancellationToken);
+        var allImages = new List<ProductImage>();
+
+        foreach (var productId in productIds)
+        {
+            var productImages = await _imageRepository.GetByProductAsync(productId, cancellationToken);
+            if (force)
+            {
+                allImages.AddRange(productImages);
+            }
+            else
+            {
+                allImages.AddRange(productImages.Where(i => i.Embedding is null));
+            }
+        }
+
+        var total = allImages.Count;
+        var successCount = 0;
+
+        _logger.LogInformation("Starting admin batch vectorization of {Count} images (force={Force})", total, force);
+
+        foreach (var image in allImages)
+        {
+            if (cancellationToken.IsCancellationRequested)
+            {
+                break;
+            }
+
+            if (await VectorizeImageInternalAsync(image, cancellationToken))
+            {
+                successCount++;
+            }
+        }
+
+        _logger.LogInformation("Admin batch vectorization completed: {Success}/{Total}", successCount, total);
+
+        return new AllVectorizationResultDto(
+            TotalImages: total,
+            VectorizedImages: successCount,
+            SkippedOrFailed: total - successCount
+        );
+    }
 }

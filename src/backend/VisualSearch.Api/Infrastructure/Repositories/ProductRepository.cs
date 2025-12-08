@@ -97,6 +97,12 @@ public sealed class ProductRepository : RepositoryBase<Product, int>, IProductRe
             .CountAsync(p => p.ProviderId == providerId, cancellationToken);
     }
 
+    public async Task<int> GetCountByCategoryAsync(int categoryId, CancellationToken cancellationToken = default)
+    {
+        return await DbSet
+            .CountAsync(p => p.CategoryId == categoryId, cancellationToken);
+    }
+
     public override async Task<IEnumerable<Product>> GetAllAsync(CancellationToken cancellationToken = default)
     {
         return await DbSet

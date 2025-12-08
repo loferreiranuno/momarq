@@ -12,13 +12,16 @@ public sealed class ProviderService
 {
     private readonly IProviderRepository _providerRepository;
     private readonly IProductRepository _productRepository;
+    private readonly IProductImageRepository _productImageRepository;
 
     public ProviderService(
         IProviderRepository providerRepository,
-        IProductRepository productRepository)
+        IProductRepository productRepository,
+        IProductImageRepository productImageRepository)
     {
         _providerRepository = providerRepository;
         _productRepository = productRepository;
+        _productImageRepository = productImageRepository;
     }
 
     public async Task<IEnumerable<ProviderDto>> GetAllProvidersAsync(CancellationToken cancellationToken = default)
@@ -35,6 +38,30 @@ public sealed class ProviderService
         return providerDtos;
     }
 
+    /// <summary>
+    /// Gets all providers with product count for admin dashboard.
+    /// </summary>
+    public async Task<IEnumerable<AdminProviderDto>> GetAllAdminProvidersAsync(CancellationToken cancellationToken = default)
+    {
+        var providers = await _providerRepository.GetAllAsync(cancellationToken);
+        var providerDtos = new List<AdminProviderDto>();
+
+        foreach (var provider in providers)
+        {
+            var productCount = await _productRepository.GetCountByProviderAsync(provider.Id, cancellationToken);
+            providerDtos.Add(new AdminProviderDto
+            {
+                Id = provider.Id,
+                Name = provider.Name,
+                LogoUrl = provider.LogoUrl,
+                WebsiteUrl = provider.WebsiteUrl,
+                ProductCount = productCount
+            });
+        }
+
+        return providerDtos;
+    }
+
     public async Task<ProviderDto?> GetProviderByIdAsync(int id, CancellationToken cancellationToken = default)
     {
         var provider = await _providerRepository.GetByIdAsync(id, cancellationToken);
@@ -45,6 +72,28 @@ public sealed class ProviderService
 
         var productCount = await _productRepository.GetCountByProviderAsync(id, cancellationToken);
         return MapToDto(provider, productCount);
+    }
+
+    /// <summary>
+    /// Gets a provider by ID for admin dashboard.
+    /// </summary>
+    public async Task<AdminProviderDto?> GetAdminProviderByIdAsync(int id, CancellationToken cancellationToken = default)
+    {
+        var provider = await _providerRepository.GetByIdAsync(id, cancellationToken);
+        if (provider is null)
+        {
+            return null;
+        }
+
+        var productCount = await _productRepository.GetCountByProviderAsync(id, cancellationToken);
+        return new AdminProviderDto
+        {
+            Id = provider.Id,
+            Name = provider.Name,
+            LogoUrl = provider.LogoUrl,
+            WebsiteUrl = provider.WebsiteUrl,
+            ProductCount = productCount
+        };
     }
 
     public async Task<ProviderDto> CreateProviderAsync(CreateProviderRequest request, CancellationToken cancellationToken = default)
@@ -66,6 +115,35 @@ public sealed class ProviderService
 
         await _providerRepository.AddAsync(provider, cancellationToken);
         return MapToDto(provider, 0);
+    }
+
+    /// <summary>
+    /// Creates a provider and returns admin DTO.
+    /// </summary>
+    public async Task<AdminProviderDto> CreateAdminProviderAsync(CreateProviderRequest request, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(request.Name))
+        {
+            throw new ArgumentException("Provider name is required.", nameof(request));
+        }
+
+        var provider = new Provider
+        {
+            Name = request.Name,
+            LogoUrl = request.LogoUrl,
+            WebsiteUrl = request.WebsiteUrl,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        await _providerRepository.AddAsync(provider, cancellationToken);
+        return new AdminProviderDto
+        {
+            Id = provider.Id,
+            Name = provider.Name,
+            LogoUrl = provider.LogoUrl,
+            WebsiteUrl = provider.WebsiteUrl,
+            ProductCount = 0
+        };
     }
 
     public async Task<ProviderDto?> UpdateProviderAsync(int id, UpdateProviderRequest request, CancellationToken cancellationToken = default)
@@ -93,6 +171,45 @@ public sealed class ProviderService
         return MapToDto(provider, productCount);
     }
 
+    /// <summary>
+    /// Updates a provider with partial data and returns admin DTO.
+    /// </summary>
+    public async Task<AdminProviderDto?> UpdateAdminProviderAsync(int id, string? name, string? logoUrl, string? websiteUrl, CancellationToken cancellationToken = default)
+    {
+        var provider = await _providerRepository.GetByIdAsync(id, cancellationToken);
+        if (provider is null)
+        {
+            return null;
+        }
+
+        if (!string.IsNullOrWhiteSpace(name))
+        {
+            provider.Name = name;
+        }
+
+        if (logoUrl is not null)
+        {
+            provider.LogoUrl = logoUrl;
+        }
+
+        if (websiteUrl is not null)
+        {
+            provider.WebsiteUrl = websiteUrl;
+        }
+
+        await _providerRepository.UpdateAsync(provider, cancellationToken);
+
+        var productCount = await _productRepository.GetCountByProviderAsync(id, cancellationToken);
+        return new AdminProviderDto
+        {
+            Id = provider.Id,
+            Name = provider.Name,
+            LogoUrl = provider.LogoUrl,
+            WebsiteUrl = provider.WebsiteUrl,
+            ProductCount = productCount
+        };
+    }
+
     public async Task<bool> DeleteProviderAsync(int id, CancellationToken cancellationToken = default)
     {
         var provider = await _providerRepository.GetByIdAsync(id, cancellationToken);
@@ -108,6 +225,37 @@ public sealed class ProviderService
             throw new InvalidOperationException($"Cannot delete provider with {productCount} products. Delete the products first.");
         }
 
+        await _providerRepository.DeleteAsync(provider, cancellationToken);
+        return true;
+    }
+
+    /// <summary>
+    /// Deletes a provider and all associated products and images (cascade delete).
+    /// </summary>
+    public async Task<bool> DeleteProviderCascadeAsync(int id, CancellationToken cancellationToken = default)
+    {
+        var provider = await _providerRepository.GetWithProductsAndImagesAsync(id, cancellationToken);
+        if (provider is null)
+        {
+            return false;
+        }
+
+        // Delete all images first
+        foreach (var product in provider.Products)
+        {
+            foreach (var image in product.Images)
+            {
+                await _productImageRepository.DeleteAsync(image, cancellationToken);
+            }
+        }
+
+        // Delete all products
+        foreach (var product in provider.Products)
+        {
+            await _productRepository.DeleteAsync(product, cancellationToken);
+        }
+
+        // Delete provider
         await _providerRepository.DeleteAsync(provider, cancellationToken);
         return true;
     }

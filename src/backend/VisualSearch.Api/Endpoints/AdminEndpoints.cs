@@ -1,8 +1,8 @@
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using Pgvector;
-using VisualSearch.Api.Data;
-using VisualSearch.Api.Data.Entities;
+using VisualSearch.Api.Application.Services;
+using VisualSearch.Api.Contracts.DTOs;
+using VisualSearch.Api.Contracts.Requests;
+using VisualSearch.Api.Domain.Interfaces;
 using VisualSearch.Api.Services;
 
 namespace VisualSearch.Api.Endpoints;
@@ -10,6 +10,7 @@ namespace VisualSearch.Api.Endpoints;
 /// <summary>
 /// Admin endpoints for managing providers, products, and product images.
 /// Includes full CRUD operations with auto-vectorization on image changes.
+/// All operations use Application Services following Clean Architecture.
 /// </summary>
 public static class AdminEndpoints
 {
@@ -136,83 +137,43 @@ public static class AdminEndpoints
     // ========== Dashboard Stats ==========
 
     private static async Task<IResult> GetStatsAsync(
-        VisualSearchDbContext dbContext,
+        DashboardService dashboardService,
         CancellationToken cancellationToken)
     {
-        var productsCount = await dbContext.Products.CountAsync(cancellationToken);
-        var providersCount = await dbContext.Providers.CountAsync(cancellationToken);
-        var imagesCount = await dbContext.ProductImages.CountAsync(cancellationToken);
-        var vectorizedCount = await dbContext.ProductImages.CountAsync(pi => pi.Embedding != null, cancellationToken);
-
-        return Results.Ok(new
-        {
-            Products = productsCount,
-            Providers = providersCount,
-            Images = imagesCount,
-            VectorizedImages = vectorizedCount,
-            VectorizationProgress = imagesCount > 0 ? (double)vectorizedCount / imagesCount * 100 : 100
-        });
+        var stats = await dashboardService.GetAdminStatsAsync(cancellationToken);
+        return Results.Ok(stats);
     }
 
     // ========== System Status ==========
 
-    private static IResult GetSystemStatusAsync(
-        ClipEmbeddingService clipService,
-        ObjectDetectionService detectionService,
-        VectorizationService vectorizationService)
+    private static IResult GetSystemStatusAsync(DashboardService dashboardService)
     {
-        return Results.Ok(new
-        {
-            ClipModelLoaded = clipService.IsModelLoaded,
-            YoloModelLoaded = detectionService.IsModelLoaded,
-            VectorizationAvailable = vectorizationService.IsAvailable,
-            ObjectDetectionAvailable = vectorizationService.IsDetectionAvailable
-        });
+        var status = dashboardService.GetAdminSystemStatus();
+        return Results.Ok(status);
     }
 
     // ========== Provider Endpoints ==========
 
     private static async Task<IResult> GetProvidersAsync(
-        VisualSearchDbContext dbContext,
+        ProviderService providerService,
         CancellationToken cancellationToken)
     {
-        var providers = await dbContext.Providers
-            .Select(p => new ProviderDto
-            {
-                Id = p.Id,
-                Name = p.Name,
-                LogoUrl = p.LogoUrl,
-                WebsiteUrl = p.WebsiteUrl,
-                ProductCount = p.Products.Count
-            })
-            .ToListAsync(cancellationToken);
-
+        var providers = await providerService.GetAllAdminProvidersAsync(cancellationToken);
         return Results.Ok(providers);
     }
 
     private static async Task<IResult> GetProviderByIdAsync(
         int id,
-        VisualSearchDbContext dbContext,
+        ProviderService providerService,
         CancellationToken cancellationToken)
     {
-        var provider = await dbContext.Providers
-            .Where(p => p.Id == id)
-            .Select(p => new ProviderDto
-            {
-                Id = p.Id,
-                Name = p.Name,
-                LogoUrl = p.LogoUrl,
-                WebsiteUrl = p.WebsiteUrl,
-                ProductCount = p.Products.Count
-            })
-            .FirstOrDefaultAsync(cancellationToken);
-
+        var provider = await providerService.GetAdminProviderByIdAsync(id, cancellationToken);
         return provider is not null ? Results.Ok(provider) : Results.NotFound();
     }
 
     private static async Task<IResult> CreateProviderAsync(
         [FromBody] CreateProviderRequest request,
-        VisualSearchDbContext dbContext,
+        ProviderService providerService,
         CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(request.Name))
@@ -220,153 +181,68 @@ public static class AdminEndpoints
             return Results.BadRequest(new { Error = "Provider name is required." });
         }
 
-        var provider = new Provider
+        try
         {
-            Name = request.Name,
-            LogoUrl = request.LogoUrl,
-            WebsiteUrl = request.WebsiteUrl
-        };
-
-        dbContext.Providers.Add(provider);
-        await dbContext.SaveChangesAsync(cancellationToken);
-
-        return Results.Created($"/api/admin/providers/{provider.Id}", new ProviderDto
+            var provider = await providerService.CreateAdminProviderAsync(request, cancellationToken);
+            return Results.Created($"/api/admin/providers/{provider.Id}", provider);
+        }
+        catch (InvalidOperationException ex)
         {
-            Id = provider.Id,
-            Name = provider.Name,
-            LogoUrl = provider.LogoUrl,
-            WebsiteUrl = provider.WebsiteUrl,
-            ProductCount = 0
-        });
+            return Results.BadRequest(new { Error = ex.Message });
+        }
     }
 
     private static async Task<IResult> UpdateProviderAsync(
         int id,
         [FromBody] UpdateProviderRequest request,
-        VisualSearchDbContext dbContext,
+        ProviderService providerService,
         CancellationToken cancellationToken)
     {
-        var provider = await dbContext.Providers.FindAsync([id], cancellationToken);
-
-        if (provider is null)
+        try
         {
-            return Results.NotFound();
+            var provider = await providerService.UpdateAdminProviderAsync(
+                id, request.Name, request.LogoUrl, request.WebsiteUrl, cancellationToken);
+
+            return provider is not null ? Results.Ok(provider) : Results.NotFound();
         }
-
-        if (!string.IsNullOrWhiteSpace(request.Name))
+        catch (InvalidOperationException ex)
         {
-            provider.Name = request.Name;
+            return Results.BadRequest(new { Error = ex.Message });
         }
-
-        if (request.LogoUrl is not null)
-        {
-            provider.LogoUrl = request.LogoUrl;
-        }
-
-        if (request.WebsiteUrl is not null)
-        {
-            provider.WebsiteUrl = request.WebsiteUrl;
-        }
-
-        await dbContext.SaveChangesAsync(cancellationToken);
-
-        return Results.Ok(new ProviderDto
-        {
-            Id = provider.Id,
-            Name = provider.Name,
-            LogoUrl = provider.LogoUrl,
-            WebsiteUrl = provider.WebsiteUrl,
-            ProductCount = await dbContext.Products.CountAsync(p => p.ProviderId == id, cancellationToken)
-        });
     }
 
     private static async Task<IResult> DeleteProviderAsync(
         int id,
-        VisualSearchDbContext dbContext,
+        ProviderService providerService,
         CancellationToken cancellationToken)
     {
-        var provider = await dbContext.Providers
-            .Include(p => p.Products)
-                .ThenInclude(p => p.Images)
-            .FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
-
-        if (provider is null)
-        {
-            return Results.NotFound();
-        }
-
-        // Delete all product images first
-        foreach (var product in provider.Products)
-        {
-            dbContext.ProductImages.RemoveRange(product.Images);
-        }
-
-        // Delete all products
-        dbContext.Products.RemoveRange(provider.Products);
-
-        // Delete provider
-        dbContext.Providers.Remove(provider);
-
-        await dbContext.SaveChangesAsync(cancellationToken);
-
-        return Results.NoContent();
+        var deleted = await providerService.DeleteProviderCascadeAsync(id, cancellationToken);
+        return deleted ? Results.NoContent() : Results.NotFound();
     }
 
     // ========== Category Endpoints ==========
 
     private static async Task<IResult> GetCategoriesAsync(
-        VisualSearchDbContext dbContext,
+        CategoryService categoryService,
         [FromQuery] bool? detectionEnabled = null,
         CancellationToken cancellationToken = default)
     {
-        var query = dbContext.Categories.AsQueryable();
-
-        if (detectionEnabled.HasValue)
-        {
-            query = query.Where(c => c.DetectionEnabled == detectionEnabled.Value);
-        }
-
-        var categories = await query
-            .OrderBy(c => c.Name)
-            .Select(c => new CategoryDto
-            {
-                Id = c.Id,
-                Name = c.Name,
-                CocoClassId = c.CocoClassId,
-                DetectionEnabled = c.DetectionEnabled,
-                ProductCount = c.Products.Count,
-                CreatedAt = c.CreatedAt
-            })
-            .ToListAsync(cancellationToken);
-
+        var categories = await categoryService.GetAllAdminCategoriesAsync(detectionEnabled, cancellationToken);
         return Results.Ok(categories);
     }
 
     private static async Task<IResult> GetCategoryByIdAsync(
         int id,
-        VisualSearchDbContext dbContext,
+        CategoryService categoryService,
         CancellationToken cancellationToken)
     {
-        var category = await dbContext.Categories
-            .Where(c => c.Id == id)
-            .Select(c => new CategoryDto
-            {
-                Id = c.Id,
-                Name = c.Name,
-                CocoClassId = c.CocoClassId,
-                DetectionEnabled = c.DetectionEnabled,
-                ProductCount = c.Products.Count,
-                CreatedAt = c.CreatedAt
-            })
-            .FirstOrDefaultAsync(cancellationToken);
-
+        var category = await categoryService.GetAdminCategoryByIdAsync(id, cancellationToken);
         return category is not null ? Results.Ok(category) : Results.NotFound();
     }
 
     private static async Task<IResult> CreateCategoryAsync(
         [FromBody] CreateCategoryRequest request,
-        VisualSearchDbContext dbContext,
-        ObjectDetectionService detectionService,
+        CategoryService categoryService,
         CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(request.Name))
@@ -374,173 +250,66 @@ public static class AdminEndpoints
             return Results.BadRequest(new { Error = "Category name is required." });
         }
 
-        // Check for duplicate name
-        var existingName = await dbContext.Categories
-            .AnyAsync(c => c.Name == request.Name, cancellationToken);
-
-        if (existingName)
+        try
         {
-            return Results.BadRequest(new { Error = $"Category with name '{request.Name}' already exists." });
+            var category = await categoryService.CreateAdminCategoryAsync(request, cancellationToken);
+            return Results.Created($"/api/admin/categories/{category.Id}", category);
         }
-
-        // Check for duplicate COCO class ID
-        var existingCocoId = await dbContext.Categories
-            .AnyAsync(c => c.CocoClassId == request.CocoClassId, cancellationToken);
-
-        if (existingCocoId)
+        catch (InvalidOperationException ex)
         {
-            return Results.BadRequest(new { Error = $"Category with COCO class ID {request.CocoClassId} already exists." });
+            return Results.BadRequest(new { Error = ex.Message });
         }
-
-        var category = new Category
-        {
-            Name = request.Name,
-            CocoClassId = request.CocoClassId,
-            DetectionEnabled = request.DetectionEnabled
-        };
-
-        dbContext.Categories.Add(category);
-        await dbContext.SaveChangesAsync(cancellationToken);
-
-        // Refresh detection service cache
-        await detectionService.RefreshEnabledCategoriesAsync(cancellationToken);
-
-        return Results.Created($"/api/admin/categories/{category.Id}", new CategoryDto
-        {
-            Id = category.Id,
-            Name = category.Name,
-            CocoClassId = category.CocoClassId,
-            DetectionEnabled = category.DetectionEnabled,
-            ProductCount = 0,
-            CreatedAt = category.CreatedAt
-        });
     }
 
     private static async Task<IResult> UpdateCategoryAsync(
         int id,
         [FromBody] UpdateCategoryRequest request,
-        VisualSearchDbContext dbContext,
-        ObjectDetectionService detectionService,
+        CategoryService categoryService,
         CancellationToken cancellationToken)
     {
-        var category = await dbContext.Categories.FindAsync([id], cancellationToken);
-
-        if (category is null)
+        try
         {
-            return Results.NotFound();
+            var category = await categoryService.UpdateAdminCategoryAsync(
+                id, request.Name, request.CocoClassId, request.DetectionEnabled, cancellationToken);
+
+            return category is not null ? Results.Ok(category) : Results.NotFound();
         }
-
-        if (!string.IsNullOrWhiteSpace(request.Name) && request.Name != category.Name)
+        catch (InvalidOperationException ex)
         {
-            var existingName = await dbContext.Categories
-                .AnyAsync(c => c.Name == request.Name && c.Id != id, cancellationToken);
-
-            if (existingName)
-            {
-                return Results.BadRequest(new { Error = $"Category with name '{request.Name}' already exists." });
-            }
-
-            category.Name = request.Name;
+            return Results.BadRequest(new { Error = ex.Message });
         }
-
-        if (request.CocoClassId.HasValue && request.CocoClassId.Value != category.CocoClassId)
-        {
-            var existingCocoId = await dbContext.Categories
-                .AnyAsync(c => c.CocoClassId == request.CocoClassId.Value && c.Id != id, cancellationToken);
-
-            if (existingCocoId)
-            {
-                return Results.BadRequest(new { Error = $"Category with COCO class ID {request.CocoClassId} already exists." });
-            }
-
-            category.CocoClassId = request.CocoClassId.Value;
-        }
-
-        if (request.DetectionEnabled.HasValue)
-        {
-            category.DetectionEnabled = request.DetectionEnabled.Value;
-        }
-
-        await dbContext.SaveChangesAsync(cancellationToken);
-
-        // Refresh detection service cache
-        await detectionService.RefreshEnabledCategoriesAsync(cancellationToken);
-
-        return Results.Ok(new CategoryDto
-        {
-            Id = category.Id,
-            Name = category.Name,
-            CocoClassId = category.CocoClassId,
-            DetectionEnabled = category.DetectionEnabled,
-            ProductCount = await dbContext.Products.CountAsync(p => p.CategoryId == id, cancellationToken),
-            CreatedAt = category.CreatedAt
-        });
     }
 
     private static async Task<IResult> DeleteCategoryAsync(
         int id,
-        VisualSearchDbContext dbContext,
+        CategoryService categoryService,
         CancellationToken cancellationToken)
     {
-        var category = await dbContext.Categories
-            .Include(c => c.Products)
-            .FirstOrDefaultAsync(c => c.Id == id, cancellationToken);
-
-        if (category is null)
+        try
         {
-            return Results.NotFound();
+            var deleted = await categoryService.DeleteAdminCategoryAsync(id, cancellationToken);
+            return deleted ? Results.NoContent() : Results.NotFound();
         }
-
-        // Cannot delete if products are associated
-        if (category.Products.Count > 0)
+        catch (InvalidOperationException ex)
         {
-            return Results.BadRequest(new 
-            { 
-                Error = $"Cannot delete category '{category.Name}' because it has {category.Products.Count} associated product(s). Please reassign or delete those products first." 
-            });
+            return Results.BadRequest(new { Error = ex.Message });
         }
-
-        dbContext.Categories.Remove(category);
-        await dbContext.SaveChangesAsync(cancellationToken);
-
-        return Results.NoContent();
     }
 
     private static async Task<IResult> ToggleCategoryDetectionAsync(
         int id,
         [FromBody] ToggleDetectionRequest request,
-        VisualSearchDbContext dbContext,
-        ObjectDetectionService detectionService,
+        CategoryService categoryService,
         CancellationToken cancellationToken)
     {
-        var category = await dbContext.Categories.FindAsync([id], cancellationToken);
-
-        if (category is null)
-        {
-            return Results.NotFound();
-        }
-
-        category.DetectionEnabled = request.DetectionEnabled;
-        await dbContext.SaveChangesAsync(cancellationToken);
-
-        // Refresh detection service cache
-        await detectionService.RefreshEnabledCategoriesAsync(cancellationToken);
-
-        return Results.Ok(new CategoryDto
-        {
-            Id = category.Id,
-            Name = category.Name,
-            CocoClassId = category.CocoClassId,
-            DetectionEnabled = category.DetectionEnabled,
-            ProductCount = await dbContext.Products.CountAsync(p => p.CategoryId == id, cancellationToken),
-            CreatedAt = category.CreatedAt
-        });
+        var category = await categoryService.ToggleAdminDetectionAsync(id, request.DetectionEnabled, cancellationToken);
+        return category is not null ? Results.Ok(category) : Results.NotFound();
     }
 
     // ========== Product Endpoints ==========
 
     private static async Task<IResult> GetProductsAsync(
-        VisualSearchDbContext dbContext,
+        ProductService productService,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20,
         [FromQuery] int? providerId = null,
@@ -548,113 +317,23 @@ public static class AdminEndpoints
         [FromQuery] string? search = null,
         CancellationToken cancellationToken = default)
     {
-        var query = dbContext.Products
-            .Include(p => p.Provider)
-            .Include(p => p.Category)
-            .Include(p => p.Images)
-            .AsQueryable();
-
-        if (providerId.HasValue)
-        {
-            query = query.Where(p => p.ProviderId == providerId.Value);
-        }
-
-        if (categoryId.HasValue)
-        {
-            query = query.Where(p => p.CategoryId == categoryId.Value);
-        }
-
-        if (!string.IsNullOrWhiteSpace(search))
-        {
-            query = query.Where(p => p.Name.Contains(search) || (p.Description != null && p.Description.Contains(search)));
-        }
-
-        var totalCount = await query.CountAsync(cancellationToken);
-
-        var products = await query
-            .OrderByDescending(p => p.CreatedAt)
-            .Skip((page - 1) * pageSize)
-            .Take(pageSize)
-            .Select(p => new ProductDto
-            {
-                Id = p.Id,
-                ProviderId = p.ProviderId,
-                ProviderName = p.Provider!.Name,
-                ExternalId = p.ExternalId,
-                Name = p.Name,
-                Description = p.Description,
-                Price = p.Price,
-                Currency = p.Currency,
-                CategoryId = p.CategoryId,
-                CategoryName = p.Category != null ? p.Category.Name : null,
-                ProductUrl = p.ProductUrl,
-                CreatedAt = p.CreatedAt,
-                Images = p.Images.Select(i => new ProductImageDto
-                {
-                    Id = i.Id,
-                    ImageUrl = i.ImageUrl,
-                    LocalPath = i.LocalPath,
-                    IsLocalFile = i.LocalPath != null,
-                    IsPrimary = i.IsPrimary,
-                    HasEmbedding = i.Embedding != null,
-                    CreatedAt = i.CreatedAt
-                }).ToList()
-            })
-            .ToListAsync(cancellationToken);
-
-        return Results.Ok(new PagedResult<ProductDto>
-        {
-            Items = products,
-            TotalCount = totalCount,
-            Page = page,
-            PageSize = pageSize,
-            TotalPages = (int)Math.Ceiling((double)totalCount / pageSize)
-        });
+        var result = await productService.GetAdminProductsPagedAsync(
+            page, pageSize, providerId, categoryId, search, cancellationToken);
+        return Results.Ok(result);
     }
 
     private static async Task<IResult> GetProductByIdAsync(
         int id,
-        VisualSearchDbContext dbContext,
+        ProductService productService,
         CancellationToken cancellationToken)
     {
-        var product = await dbContext.Products
-            .Include(p => p.Provider)
-            .Include(p => p.Category)
-            .Include(p => p.Images)
-            .Where(p => p.Id == id)
-            .Select(p => new ProductDto
-            {
-                Id = p.Id,
-                ProviderId = p.ProviderId,
-                ProviderName = p.Provider!.Name,
-                ExternalId = p.ExternalId,
-                Name = p.Name,
-                Description = p.Description,
-                Price = p.Price,
-                Currency = p.Currency,
-                CategoryId = p.CategoryId,
-                CategoryName = p.Category != null ? p.Category.Name : null,
-                ProductUrl = p.ProductUrl,
-                CreatedAt = p.CreatedAt,
-                Images = p.Images.Select(i => new ProductImageDto
-                {
-                    Id = i.Id,
-                    ImageUrl = i.ImageUrl,
-                    LocalPath = i.LocalPath,
-                    IsLocalFile = i.LocalPath != null,
-                    IsPrimary = i.IsPrimary,
-                    HasEmbedding = i.Embedding != null,
-                    CreatedAt = i.CreatedAt
-                }).ToList()
-            })
-            .FirstOrDefaultAsync(cancellationToken);
-
+        var product = await productService.GetAdminProductByIdAsync(id, cancellationToken);
         return product is not null ? Results.Ok(product) : Results.NotFound();
     }
 
     private static async Task<IResult> CreateProductAsync(
-        [FromBody] CreateProductRequest request,
-        VisualSearchDbContext dbContext,
+        [FromBody] CreateProductRequestAdmin request,
+        ProductService productService,
         CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(request.Name))
@@ -662,132 +341,62 @@ public static class AdminEndpoints
             return Results.BadRequest(new { Error = "Product name is required." });
         }
 
-        var providerExists = await dbContext.Providers
-            .AnyAsync(p => p.Id == request.ProviderId, cancellationToken);
-
-        if (!providerExists)
+        try
         {
-            return Results.BadRequest(new { Error = $"Provider with ID {request.ProviderId} not found." });
+            var productId = await productService.CreateAdminProductAsync(
+                request.ProviderId,
+                request.Name,
+                request.ExternalId,
+                request.Description,
+                request.Price,
+                request.Currency,
+                request.CategoryId,
+                request.ProductUrl,
+                cancellationToken);
+
+            return Results.Created($"/api/admin/products/{productId}", new { Id = productId });
         }
-
-        var product = new Product
+        catch (InvalidOperationException ex)
         {
-            ProviderId = request.ProviderId,
-            ExternalId = request.ExternalId,
-            Name = request.Name,
-            Description = request.Description,
-            Price = request.Price,
-            Currency = request.Currency ?? "EUR",
-            CategoryId = request.CategoryId,
-            ProductUrl = request.ProductUrl
-        };
-
-        dbContext.Products.Add(product);
-        await dbContext.SaveChangesAsync(cancellationToken);
-
-        return Results.Created($"/api/admin/products/{product.Id}", new { product.Id });
+            return Results.BadRequest(new { Error = ex.Message });
+        }
     }
 
     private static async Task<IResult> UpdateProductAsync(
         int id,
-        [FromBody] UpdateProductRequest request,
-        VisualSearchDbContext dbContext,
+        [FromBody] UpdateProductRequestAdmin request,
+        ProductService productService,
         CancellationToken cancellationToken)
     {
-        var product = await dbContext.Products.FindAsync([id], cancellationToken);
-
-        if (product is null)
+        try
         {
-            return Results.NotFound();
-        }
+            var productId = await productService.UpdateAdminProductAsync(
+                id,
+                request.ProviderId,
+                request.ExternalId,
+                request.Name,
+                request.Description,
+                request.Price,
+                request.Currency,
+                request.CategoryId,
+                request.ProductUrl,
+                cancellationToken);
 
-        if (request.ProviderId.HasValue)
+            return productId.HasValue ? Results.Ok(new { Id = productId.Value }) : Results.NotFound();
+        }
+        catch (InvalidOperationException ex)
         {
-            var providerExists = await dbContext.Providers
-                .AnyAsync(p => p.Id == request.ProviderId.Value, cancellationToken);
-
-            if (!providerExists)
-            {
-                return Results.BadRequest(new { Error = $"Provider with ID {request.ProviderId.Value} not found." });
-            }
-
-            product.ProviderId = request.ProviderId.Value;
+            return Results.BadRequest(new { Error = ex.Message });
         }
-
-        if (request.ExternalId is not null)
-        {
-            product.ExternalId = request.ExternalId;
-        }
-
-        if (!string.IsNullOrWhiteSpace(request.Name))
-        {
-            product.Name = request.Name;
-        }
-
-        if (request.Description is not null)
-        {
-            product.Description = request.Description;
-        }
-
-        if (request.Price.HasValue)
-        {
-            product.Price = request.Price.Value;
-        }
-
-        if (request.Currency is not null)
-        {
-            product.Currency = request.Currency;
-        }
-
-        if (request.CategoryId.HasValue)
-        {
-            // Validate category exists if a value is provided
-            if (request.CategoryId.Value > 0)
-            {
-                var categoryExists = await dbContext.Categories
-                    .AnyAsync(c => c.Id == request.CategoryId.Value, cancellationToken);
-
-                if (!categoryExists)
-                {
-                    return Results.BadRequest(new { Error = $"Category with ID {request.CategoryId.Value} not found." });
-                }
-            }
-            product.CategoryId = request.CategoryId.Value > 0 ? request.CategoryId.Value : null;
-        }
-
-        if (request.ProductUrl is not null)
-        {
-            product.ProductUrl = request.ProductUrl;
-        }
-
-        await dbContext.SaveChangesAsync(cancellationToken);
-
-        return Results.Ok(new { product.Id });
     }
 
     private static async Task<IResult> DeleteProductAsync(
         int id,
-        VisualSearchDbContext dbContext,
+        ProductService productService,
         CancellationToken cancellationToken)
     {
-        var product = await dbContext.Products
-            .Include(p => p.Images)
-            .FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
-
-        if (product is null)
-        {
-            return Results.NotFound();
-        }
-
-        // Delete all images first
-        dbContext.ProductImages.RemoveRange(product.Images);
-
-        // Delete product
-        dbContext.Products.Remove(product);
-
-        await dbContext.SaveChangesAsync(cancellationToken);
-
-        return Results.NoContent();
+        var deleted = await productService.DeleteAdminProductAsync(id, cancellationToken);
+        return deleted ? Results.NoContent() : Results.NotFound();
     }
 
     // ========== Product Image Endpoints ==========
@@ -795,8 +404,7 @@ public static class AdminEndpoints
     private static async Task<IResult> AddProductImageAsync(
         int productId,
         [FromBody] AddImageRequest request,
-        VisualSearchDbContext dbContext,
-        VectorizationService vectorizationService,
+        IProductImageService productImageService,
         ILogger<Program> logger,
         CancellationToken cancellationToken)
     {
@@ -805,149 +413,51 @@ public static class AdminEndpoints
             return Results.BadRequest(new { Error = "Image URL is required." });
         }
 
-        var product = await dbContext.Products.FindAsync([productId], cancellationToken);
-
-        if (product is null)
+        try
         {
-            return Results.NotFound(new { Error = $"Product with ID {productId} not found." });
-        }
+            var image = await productImageService.AddFromUrlWithVectorizationAsync(
+                productId, request.ImageUrl, request.IsPrimary, cancellationToken);
 
-        // Generate embedding
-        float[]? embedding = null;
-        if (vectorizationService.IsAvailable)
-        {
-            embedding = await vectorizationService.GenerateEmbeddingFromUrlAsync(request.ImageUrl, cancellationToken);
-
-            if (embedding is null)
+            if (!image.HasEmbedding)
             {
                 logger.LogWarning("Failed to generate embedding for image URL: {ImageUrl}", request.ImageUrl);
             }
+
+            return Results.Created($"/api/admin/products/{productId}/images/{image.Id}", image);
         }
-
-        var productImage = new ProductImage
+        catch (InvalidOperationException ex)
         {
-            ProductId = productId,
-            ImageUrl = request.ImageUrl,
-            Embedding = embedding is not null ? new Vector(embedding) : null,
-            IsPrimary = request.IsPrimary
-        };
-
-        // If this is primary, unset other primary images
-        if (request.IsPrimary)
-        {
-            await dbContext.ProductImages
-                .Where(pi => pi.ProductId == productId && pi.IsPrimary)
-                .ExecuteUpdateAsync(s => s.SetProperty(pi => pi.IsPrimary, false), cancellationToken);
+            return Results.NotFound(new { Error = ex.Message });
         }
-
-        dbContext.ProductImages.Add(productImage);
-        await dbContext.SaveChangesAsync(cancellationToken);
-
-        return Results.Created($"/api/admin/products/{productId}/images/{productImage.Id}", new ProductImageDto
-        {
-            Id = productImage.Id,
-            ImageUrl = productImage.ImageUrl,
-            LocalPath = productImage.LocalPath,
-            IsLocalFile = productImage.LocalPath is not null,
-            IsPrimary = productImage.IsPrimary,
-            HasEmbedding = productImage.Embedding is not null,
-            CreatedAt = productImage.CreatedAt
-        });
     }
 
     private static async Task<IResult> UpdateProductImageAsync(
         int productId,
         int imageId,
         [FromBody] UpdateImageRequest request,
-        VisualSearchDbContext dbContext,
-        VectorizationService vectorizationService,
+        IProductImageService productImageService,
         ILogger<Program> logger,
         CancellationToken cancellationToken)
     {
-        var productImage = await dbContext.ProductImages
-            .FirstOrDefaultAsync(pi => pi.Id == imageId && pi.ProductId == productId, cancellationToken);
+        var image = await productImageService.UpdateWithUrlChangeAsync(
+            productId, imageId, request.ImageUrl, request.IsPrimary, cancellationToken);
 
-        if (productImage is null)
+        if (image is null)
         {
             return Results.NotFound();
         }
 
-        var urlChanged = false;
-
-        if (!string.IsNullOrWhiteSpace(request.ImageUrl) && request.ImageUrl != productImage.ImageUrl)
-        {
-            productImage.ImageUrl = request.ImageUrl;
-            urlChanged = true;
-        }
-
-        if (request.IsPrimary.HasValue)
-        {
-            if (request.IsPrimary.Value && !productImage.IsPrimary)
-            {
-                // Unset other primary images
-                await dbContext.ProductImages
-                    .Where(pi => pi.ProductId == productId && pi.IsPrimary && pi.Id != imageId)
-                    .ExecuteUpdateAsync(s => s.SetProperty(pi => pi.IsPrimary, false), cancellationToken);
-            }
-
-            productImage.IsPrimary = request.IsPrimary.Value;
-        }
-
-        // Re-vectorize if URL changed
-        if (urlChanged && vectorizationService.IsAvailable)
-        {
-            var embedding = await vectorizationService.GenerateEmbeddingFromUrlAsync(productImage.ImageUrl, cancellationToken);
-
-            if (embedding is not null)
-            {
-                productImage.Embedding = new Vector(embedding);
-                logger.LogInformation("Re-vectorized image {ImageId} after URL change", imageId);
-            }
-            else
-            {
-                logger.LogWarning("Failed to re-vectorize image {ImageId}", imageId);
-            }
-        }
-
-        await dbContext.SaveChangesAsync(cancellationToken);
-
-        return Results.Ok(new ProductImageDto
-        {
-            Id = productImage.Id,
-            ImageUrl = productImage.ImageUrl,
-            LocalPath = productImage.LocalPath,
-            IsLocalFile = productImage.LocalPath is not null,
-            IsPrimary = productImage.IsPrimary,
-            HasEmbedding = productImage.Embedding is not null,
-            CreatedAt = productImage.CreatedAt
-        });
+        return Results.Ok(image);
     }
 
     private static async Task<IResult> DeleteProductImageAsync(
         int productId,
         int imageId,
-        VisualSearchDbContext dbContext,
-        ImageUploadService imageUploadService,
+        IProductImageService productImageService,
         CancellationToken cancellationToken)
     {
-        var productImage = await dbContext.ProductImages
-            .FirstOrDefaultAsync(pi => pi.Id == imageId && pi.ProductId == productId, cancellationToken);
-
-        if (productImage is null)
-        {
-            return Results.NotFound();
-        }
-
-        // Delete local file if exists
-        if (!string.IsNullOrWhiteSpace(productImage.LocalPath))
-        {
-            imageUploadService.DeleteImage(productImage.LocalPath);
-        }
-
-        dbContext.ProductImages.Remove(productImage);
-        await dbContext.SaveChangesAsync(cancellationToken);
-
-        return Results.NoContent();
+        var deleted = await productImageService.DeleteByProductAsync(productId, imageId, cancellationToken);
+        return deleted ? Results.NoContent() : Results.NotFound();
     }
 
     // ========== Image Upload Endpoint ==========
@@ -956,19 +466,10 @@ public static class AdminEndpoints
         int productId,
         IFormFile file,
         [FromForm] bool isPrimary,
-        VisualSearchDbContext dbContext,
-        ImageUploadService imageUploadService,
-        VectorizationService vectorizationService,
+        IProductImageService productImageService,
         ILogger<Program> logger,
         CancellationToken cancellationToken)
     {
-        // Validate product exists
-        var product = await dbContext.Products.FindAsync([productId], cancellationToken);
-        if (product is null)
-        {
-            return Results.NotFound(new { Error = $"Product with ID {productId} not found." });
-        }
-
         // Validate file
         if (file is null || file.Length == 0)
         {
@@ -990,57 +491,22 @@ public static class AdminEndpoints
 
         try
         {
-            // Save and process the image
             using var stream = file.OpenReadStream();
-            var (relativePath, imageBytes) = await imageUploadService.SaveImageAsync(stream, file.FileName, cancellationToken);
+            var image = await productImageService.UploadWithVectorizationAsync(
+                productId, stream, file.FileName, isPrimary, cancellationToken);
 
-            // Build the URL for accessing the image
-            var imageUrl = $"/uploads/{relativePath}";
-
-            // Generate embedding
-            float[]? embedding = null;
-            if (vectorizationService.IsAvailable)
+            if (!image.HasEmbedding)
             {
-                embedding = await vectorizationService.GenerateEmbeddingAsync(imageBytes, cancellationToken);
-                if (embedding is null)
-                {
-                    logger.LogWarning("Failed to generate embedding for uploaded image");
-                }
+                logger.LogWarning("Failed to generate embedding for uploaded image");
             }
 
-            // Create product image record
-            var productImage = new ProductImage
-            {
-                ProductId = productId,
-                ImageUrl = imageUrl,
-                LocalPath = relativePath,
-                Embedding = embedding is not null ? new Pgvector.Vector(embedding) : null,
-                IsPrimary = isPrimary
-            };
+            logger.LogInformation("Uploaded image for product {ProductId}: {LocalPath}", productId, image.LocalPath);
 
-            // If this is primary, unset other primary images
-            if (isPrimary)
-            {
-                await dbContext.ProductImages
-                    .Where(pi => pi.ProductId == productId && pi.IsPrimary)
-                    .ExecuteUpdateAsync(s => s.SetProperty(pi => pi.IsPrimary, false), cancellationToken);
-            }
-
-            dbContext.ProductImages.Add(productImage);
-            await dbContext.SaveChangesAsync(cancellationToken);
-
-            logger.LogInformation("Uploaded image for product {ProductId}: {LocalPath}", productId, relativePath);
-
-            return Results.Created($"/api/admin/products/{productId}/images/{productImage.Id}", new ProductImageDto
-            {
-                Id = productImage.Id,
-                ImageUrl = productImage.ImageUrl,
-                LocalPath = productImage.LocalPath,
-                IsLocalFile = true,
-                IsPrimary = productImage.IsPrimary,
-                HasEmbedding = productImage.Embedding is not null,
-                CreatedAt = productImage.CreatedAt
-            });
+            return Results.Created($"/api/admin/products/{productId}/images/{image.Id}", image);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Results.NotFound(new { Error = ex.Message });
         }
         catch (Exception ex)
         {
@@ -1051,28 +517,13 @@ public static class AdminEndpoints
 
     // ========== Image Download from URL Endpoint ==========
 
-    /// <summary>
-    /// Request DTO for downloading an image from URL.
-    /// </summary>
-    private sealed record DownloadImageRequest(string ImageUrl, bool IsPrimary = false);
-
     private static async Task<IResult> DownloadAndSaveProductImageAsync(
         int productId,
         [FromBody] DownloadImageRequest request,
-        VisualSearchDbContext dbContext,
-        ImageUploadService imageUploadService,
-        VectorizationService vectorizationService,
-        IHttpClientFactory httpClientFactory,
+        IProductImageService productImageService,
         ILogger<Program> logger,
         CancellationToken cancellationToken)
     {
-        // Validate product exists
-        var product = await dbContext.Products.FindAsync([productId], cancellationToken);
-        if (product is null)
-        {
-            return Results.NotFound(new { Error = $"Product with ID {productId} not found." });
-        }
-
         // Validate URL
         if (string.IsNullOrWhiteSpace(request.ImageUrl))
         {
@@ -1087,99 +538,26 @@ public static class AdminEndpoints
 
         try
         {
-            // Download the image from URL (bypass SSL validation for problematic URLs)
-            using var httpClient = httpClientFactory.CreateClient("ImageDownload");
-            httpClient.Timeout = TimeSpan.FromSeconds(30);
-            
-            using var response = await httpClient.GetAsync(uri, cancellationToken);
-            response.EnsureSuccessStatusCode();
+            var image = await productImageService.DownloadAndSaveWithVectorizationAsync(
+                productId, request.ImageUrl, request.IsPrimary, cancellationToken);
 
-            // Validate content type
-            var contentType = response.Content.Headers.ContentType?.MediaType?.ToLowerInvariant();
-            var allowedTypes = new[] { "image/jpeg", "image/png", "image/gif", "image/webp", "image/jpg" };
-            if (contentType is null || !allowedTypes.Contains(contentType))
+            if (!image.HasEmbedding)
             {
-                return Results.BadRequest(new { Error = $"Invalid content type: {contentType}. Expected an image." });
+                logger.LogWarning("Failed to generate embedding for downloaded image from {Url}", request.ImageUrl);
             }
 
-            // Read image bytes
-            var imageBytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
-            
-            // Validate size (max 20MB)
-            if (imageBytes.Length > 20 * 1024 * 1024)
-            {
-                return Results.BadRequest(new { Error = "Downloaded image too large. Maximum size is 20MB." });
-            }
+            logger.LogInformation("Downloaded and saved image for product {ProductId} from {Url}: {LocalPath}",
+                productId, request.ImageUrl, image.LocalPath);
 
-            // Generate filename from URL
-            var filename = Path.GetFileName(uri.LocalPath);
-            if (string.IsNullOrWhiteSpace(filename) || !filename.Contains('.'))
-            {
-                var extension = contentType?.Replace("image/", "") ?? "jpg";
-                if (extension == "jpeg") extension = "jpg";
-                filename = $"downloaded-{Guid.NewGuid():N}.{extension}";
-            }
-
-            // Save and process the image
-            var (relativePath, processedBytes) = await imageUploadService.SaveImageBytesAsync(imageBytes, filename, cancellationToken);
-
-            // Build the URL for accessing the image
-            var localImageUrl = $"/uploads/{relativePath}";
-
-            // Generate embedding
-            float[]? embedding = null;
-            if (vectorizationService.IsAvailable)
-            {
-                embedding = await vectorizationService.GenerateEmbeddingAsync(processedBytes, cancellationToken);
-                if (embedding is null)
-                {
-                    logger.LogWarning("Failed to generate embedding for downloaded image from {Url}", request.ImageUrl);
-                }
-            }
-
-            // Create product image record
-            var productImage = new ProductImage
-            {
-                ProductId = productId,
-                ImageUrl = localImageUrl,
-                LocalPath = relativePath,
-                Embedding = embedding is not null ? new Pgvector.Vector(embedding) : null,
-                IsPrimary = request.IsPrimary
-            };
-
-            // If this is primary, unset other primary images
-            if (request.IsPrimary)
-            {
-                await dbContext.ProductImages
-                    .Where(pi => pi.ProductId == productId && pi.IsPrimary)
-                    .ExecuteUpdateAsync(s => s.SetProperty(pi => pi.IsPrimary, false), cancellationToken);
-            }
-
-            dbContext.ProductImages.Add(productImage);
-            await dbContext.SaveChangesAsync(cancellationToken);
-
-            logger.LogInformation("Downloaded and saved image for product {ProductId} from {Url}: {LocalPath}", 
-                productId, request.ImageUrl, relativePath);
-
-            return Results.Created($"/api/admin/products/{productId}/images/{productImage.Id}", new ProductImageDto
-            {
-                Id = productImage.Id,
-                ImageUrl = productImage.ImageUrl,
-                LocalPath = productImage.LocalPath,
-                IsLocalFile = true,
-                IsPrimary = productImage.IsPrimary,
-                HasEmbedding = productImage.Embedding is not null,
-                CreatedAt = productImage.CreatedAt
-            });
+            return Results.Created($"/api/admin/products/{productId}/images/{image.Id}", image);
         }
-        catch (HttpRequestException ex)
+        catch (InvalidOperationException ex)
         {
-            logger.LogError(ex, "Failed to download image from {Url}", request.ImageUrl);
-            return Results.BadRequest(new { Error = $"Failed to download image: {ex.Message}" });
-        }
-        catch (TaskCanceledException)
-        {
-            return Results.BadRequest(new { Error = "Image download timed out." });
+            if (ex.Message.Contains("not found", StringComparison.OrdinalIgnoreCase))
+            {
+                return Results.NotFound(new { Error = ex.Message });
+            }
+            return Results.BadRequest(new { Error = ex.Message });
         }
         catch (Exception ex)
         {
@@ -1192,118 +570,47 @@ public static class AdminEndpoints
 
     private static async Task<IResult> VectorizeProductAsync(
         int productId,
-        VisualSearchDbContext dbContext,
-        VectorizationService vectorizationService,
+        IProductImageService productImageService,
+        ProductService productService,
         CancellationToken cancellationToken)
     {
-        if (!vectorizationService.IsAvailable)
+        if (!productImageService.IsVectorizationAvailable)
         {
             return Results.BadRequest(new { Error = "Vectorization is not available. CLIP model not loaded." });
         }
 
-        var product = await dbContext.Products
-            .Include(p => p.Images)
-            .FirstOrDefaultAsync(p => p.Id == productId, cancellationToken);
-
+        var product = await productService.GetAdminProductByIdAsync(productId, cancellationToken);
         if (product is null)
         {
             return Results.NotFound();
         }
 
-        var successCount = await vectorizationService.VectorizeProductAsync(dbContext, productId, cancellationToken);
+        var successCount = await productImageService.VectorizeProductImagesAsync(productId, cancellationToken);
 
-        return Results.Ok(new
-        {
-            ProductId = productId,
-            TotalImages = product.Images.Count,
-            VectorizedImages = successCount
-        });
+        return Results.Ok(new ProductVectorizationResultDto(
+            ProductId: productId,
+            TotalImages: product.Images.Count,
+            VectorizedImages: successCount
+        ));
     }
 
     private static async Task<IResult> VectorizeAllAsync(
         [FromQuery] bool force = false,
-        VisualSearchDbContext dbContext = null!,
-        VectorizationService vectorizationService = null!,
+        IProductImageService productImageService = null!,
         CancellationToken cancellationToken = default)
     {
-        if (!vectorizationService.IsAvailable)
+        if (!productImageService.IsVectorizationAvailable)
         {
             return Results.BadRequest(new { Error = "Vectorization is not available. CLIP model not loaded." });
         }
 
-        var (success, total) = await vectorizationService.VectorizeAllAsync(dbContext, force, cancellationToken);
-
-        return Results.Ok(new
-        {
-            TotalImages = total,
-            VectorizedImages = success,
-            SkippedOrFailed = total - success
-        });
+        var result = await productImageService.VectorizeAllAdminAsync(force, cancellationToken);
+        return Results.Ok(result);
     }
 
-    // ========== DTOs ==========
+    // ========== Request DTOs (Admin-specific with ExternalId) ==========
 
-    private sealed class ProviderDto
-    {
-        public int Id { get; set; }
-        public required string Name { get; set; }
-        public string? LogoUrl { get; set; }
-        public string? WebsiteUrl { get; set; }
-        public int ProductCount { get; set; }
-    }
-
-    private sealed class ProductDto
-    {
-        public int Id { get; set; }
-        public int ProviderId { get; set; }
-        public required string ProviderName { get; set; }
-        public string? ExternalId { get; set; }
-        public required string Name { get; set; }
-        public string? Description { get; set; }
-        public decimal Price { get; set; }
-        public string? Currency { get; set; }
-        public int? CategoryId { get; set; }
-        public string? CategoryName { get; set; }
-        public string? ProductUrl { get; set; }
-        public DateTime CreatedAt { get; set; }
-        public List<ProductImageDto> Images { get; set; } = [];
-    }
-
-    private sealed class ProductImageDto
-    {
-        public int Id { get; set; }
-        public required string ImageUrl { get; set; }
-        public string? LocalPath { get; set; }
-        public bool IsLocalFile { get; set; }
-        public bool IsPrimary { get; set; }
-        public bool HasEmbedding { get; set; }
-        public DateTime CreatedAt { get; set; }
-    }
-
-    private sealed class PagedResult<T>
-    {
-        public List<T> Items { get; set; } = [];
-        public int TotalCount { get; set; }
-        public int Page { get; set; }
-        public int PageSize { get; set; }
-        public int TotalPages { get; set; }
-    }
-
-    private sealed class CreateProviderRequest
-    {
-        public required string Name { get; set; }
-        public string? LogoUrl { get; set; }
-        public string? WebsiteUrl { get; set; }
-    }
-
-    private sealed class UpdateProviderRequest
-    {
-        public string? Name { get; set; }
-        public string? LogoUrl { get; set; }
-        public string? WebsiteUrl { get; set; }
-    }
-
-    private sealed class CreateProductRequest
+    private sealed class CreateProductRequestAdmin
     {
         public int ProviderId { get; set; }
         public string? ExternalId { get; set; }
@@ -1315,7 +622,7 @@ public static class AdminEndpoints
         public string? ProductUrl { get; set; }
     }
 
-    private sealed class UpdateProductRequest
+    private sealed class UpdateProductRequestAdmin
     {
         public int? ProviderId { get; set; }
         public string? ExternalId { get; set; }
@@ -1339,32 +646,8 @@ public static class AdminEndpoints
         public bool? IsPrimary { get; set; }
     }
 
-    private sealed class CategoryDto
-    {
-        public int Id { get; set; }
-        public required string Name { get; set; }
-        public int CocoClassId { get; set; }
-        public bool DetectionEnabled { get; set; }
-        public int ProductCount { get; set; }
-        public DateTime CreatedAt { get; set; }
-    }
-
-    private sealed class CreateCategoryRequest
-    {
-        public required string Name { get; set; }
-        public int CocoClassId { get; set; }
-        public bool DetectionEnabled { get; set; } = true;
-    }
-
-    private sealed class UpdateCategoryRequest
-    {
-        public string? Name { get; set; }
-        public int? CocoClassId { get; set; }
-        public bool? DetectionEnabled { get; set; }
-    }
-
-    private sealed class ToggleDetectionRequest
-    {
-        public bool DetectionEnabled { get; set; }
-    }
+    /// <summary>
+    /// Request DTO for downloading an image from URL.
+    /// </summary>
+    private sealed record DownloadImageRequest(string ImageUrl, bool IsPrimary = false);
 }

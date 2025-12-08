@@ -52,4 +52,19 @@ public interface IProductImageRepository : IRepository<ProductImage, int>
     /// Gets the total count of product images.
     /// </summary>
     Task<int> GetTotalCountAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Gets the count of images that have embeddings.
+    /// </summary>
+    Task<int> GetVectorizedCountAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Gets an image by ID ensuring it belongs to the specified product.
+    /// </summary>
+    Task<ProductImage?> GetByIdAndProductAsync(int imageId, int productId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Clears the primary flag from all images of a product.
+    /// </summary>
+    Task ClearPrimaryImagesAsync(int productId, CancellationToken cancellationToken = default);
 }

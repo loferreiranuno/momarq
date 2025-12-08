@@ -16,4 +16,5 @@ public interface IProductRepository : IRepository<Product, int>
     Task<IEnumerable<Product>> GetByCategoryAsync(int categoryId, CancellationToken cancellationToken = default);
     Task<Product?> GetWithImagesAsync(int id, CancellationToken cancellationToken = default);
     Task<int> GetCountByProviderAsync(int providerId, CancellationToken cancellationToken = default);
+    Task<int> GetCountByCategoryAsync(int categoryId, CancellationToken cancellationToken = default);
 }
