@@ -379,12 +379,17 @@ public sealed class CrawlJobWorkerService : BackgroundService
         var finalJob = await db.CrawlJobs.FindAsync([job.Id], ct);
         if (finalJob != null && finalJob.Status == CrawlJobStatus.Running)
         {
-            finalJob.Status = errorCount > 0 && processedCount == errorCount
-                ? CrawlJobStatus.Failed
-                : CrawlJobStatus.Succeeded;
+            var isFailed = errorCount > 0 && processedCount == errorCount;
+            finalJob.Status = isFailed ? CrawlJobStatus.Failed : CrawlJobStatus.Succeeded;
             finalJob.CompletedAt = DateTime.UtcNow;
             finalJob.LeaseOwner = null;
             finalJob.LeaseExpiresAt = null;
+
+            // Set error message if job failed
+            if (isFailed)
+            {
+                finalJob.ErrorMessage = await BuildJobErrorSummaryAsync(db, job.Id, errorCount, processedCount, ct);
+            }
 
             await db.SaveChangesAsync(ct);
 
@@ -407,6 +412,45 @@ public sealed class CrawlJobWorkerService : BackgroundService
 
             await db.SaveChangesAsync(ct);
         }
+    }
+
+    private static async Task<string> BuildJobErrorSummaryAsync(
+        WorkerDbContext db,
+        long jobId,
+        int errorCount,
+        int processedCount,
+        CancellationToken ct)
+    {
+        if (processedCount == 0)
+        {
+            return "No pages could be crawled.";
+        }
+
+        // Get up to 5 unique error messages from failed pages
+        var failedPageErrors = await db.CrawlPages
+            .Where(p => p.CrawlJobId == jobId && p.Status == CrawlPageStatus.Failed && p.ErrorMessage != null)
+            .Select(p => p.ErrorMessage!)
+            .Distinct()
+            .Take(5)
+            .ToListAsync(ct);
+
+        if (failedPageErrors.Count == 0)
+        {
+            return $"Failed {errorCount} of {processedCount} pages.";
+        }
+
+        var errorSummary = string.Join("; ", failedPageErrors.Select(e => 
+            e.Length > 100 ? e.Substring(0, 97) + "..." : e));
+
+        var summary = $"Failed {errorCount} of {processedCount} pages. Errors: {errorSummary}";
+
+        // Truncate to database field limit (2000 chars)
+        if (summary.Length > 2000)
+        {
+            summary = summary.Substring(0, 1997) + "...";
+        }
+
+        return summary;
     }
 
     private static CrawlerConfig GetCrawlerConfig(ProviderEntity? provider)
