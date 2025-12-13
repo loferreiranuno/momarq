@@ -36,6 +36,10 @@ builder.WebHost.ConfigureKestrel(options =>
 var jwtOptions = JwtOptions.Create(builder.Configuration);
 builder.Services.AddSingleton(jwtOptions);
 
+// Configure ModelSettings from appsettings.json
+builder.Services.Configure<ModelSettings>(
+    builder.Configuration.GetSection("ModelSettings"));
+
 // ========== Services Configuration (using organized DI extensions) ==========
 
 // Add database services (DbContext with pgvector)
@@ -143,8 +147,20 @@ app.UseAuthorization();
 
 // ========== Endpoints ==========
 
-// Health check endpoint
-app.MapGet("/health", () => Results.Ok(new { Status = "Healthy", Timestamp = DateTime.UtcNow }))
+// Health check endpoint with model status
+app.MapGet("/health", (
+    ClipEmbeddingService clipService,
+    ObjectDetectionService yoloService) => 
+    Results.Ok(new 
+    { 
+        Status = "Healthy", 
+        Timestamp = DateTime.UtcNow,
+        Models = new 
+        {
+            ClipLoaded = clipService.IsModelLoaded,
+            YoloLoaded = yoloService.IsModelLoaded
+        }
+    }))
     .WithName("HealthCheck")
     .WithTags("System");
 

@@ -53,6 +53,7 @@ services:
       - Uploads__Path=/app/uploads
     volumes:
       - uploads_data:/app/uploads
+      - models_data:/app/Models
     depends_on:
       postgres:
         condition: service_healthy
@@ -155,6 +156,8 @@ volumes:
     name: visualsearch-postgres-data
   uploads_data:
     name: visualsearch-uploads-data
+  models_data:
+    name: visualsearch-models-data
   letsencrypt_data:
     name: traefik-letsencrypt
 

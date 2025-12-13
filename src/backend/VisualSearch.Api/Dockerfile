@@ -63,5 +63,5 @@ ENTRYPOINT ["dotnet", "VisualSearch.Api.dll"]
 FROM runtime-base AS runtime-with-models
 COPY --from=models /models/*.onnx /app/Models/
 
-# Default target: runtime without bundled models (offline / proxy-friendly).
-FROM runtime-base AS runtime
+# Default target: runtime with bundled models (can be overridden with volume mount)
+FROM runtime-with-models AS runtime
