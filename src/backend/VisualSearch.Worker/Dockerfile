@@ -21,6 +21,14 @@ RUN dotnet publish "VisualSearch.Worker.csproj" -c Release -o /app/publish /p:Us
 FROM mcr.microsoft.com/playwright/dotnet:v1.49.0-noble AS final
 WORKDIR /app
 
+# Install .NET 9.0 runtime (Playwright image only has .NET 8.0)
+RUN apt-get update && apt-get install -y wget \
+    && wget https://dot.net/v1/dotnet-install.sh -O dotnet-install.sh \
+    && chmod +x dotnet-install.sh \
+    && ./dotnet-install.sh --channel 9.0 --runtime aspnetcore --install-dir /usr/share/dotnet \
+    && rm dotnet-install.sh \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
 # Install only Chromium browser (smaller footprint than all browsers)
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 RUN pwsh -Command "& { (Get-Content -Path /ms-playwright-agent/package.json | ConvertFrom-Json).version }" || true

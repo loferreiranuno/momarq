@@ -364,6 +364,14 @@ public sealed class CrawlJobWorkerService : BackgroundService
                 errorCount++;
 
                 _logger.LogError(ex, "Error processing page {PageId} ({Url})", page.Id, page.Url);
+
+                // Stop job immediately on critical errors (OutOfMemoryException, etc.)
+                if (IsCriticalError(ex))
+                {
+                    _logger.LogCritical(ex, "Critical error detected, stopping job {JobId}", job.Id);
+                    await MarkJobFailedAsync(db, job.Id, $"Critical error: {ex.GetType().Name} - {ex.Message}", ct);
+                    return; // Exit the processing loop
+                }
             }
         }
 
@@ -418,6 +426,20 @@ public sealed class CrawlJobWorkerService : BackgroundService
             return new CrawlerConfig();
         }
     }
+
+    /// <summary>
+    /// Determines if an exception is critical and should stop the job immediately.
+    /// Critical errors indicate resource exhaustion or unrecoverable states.
+    /// </summary>
+    private static bool IsCriticalError(Exception ex)
+    {
+        return ex is OutOfMemoryException
+            or StackOverflowException
+            or InsufficientMemoryException
+            or AccessViolationException
+            // Also check inner exceptions for wrapped critical errors
+            || (ex.InnerException is not null && IsCriticalError(ex.InnerException));
+    }
 }
 
 /// <summary>
@@ -430,7 +452,7 @@ public sealed class WorkerOptions
     /// <summary>
     /// Unique identifier for this worker instance.
     /// </summary>
-    public string WorkerId { get; set; } = $"worker-{Environment.MachineName}-{Guid.NewGuid():N[..8]}";
+    public string WorkerId { get; set; } = $"worker-{Environment.MachineName}-{Guid.NewGuid().ToString("N")[..8]}";
 
     /// <summary>
     /// Poll interval in seconds when no jobs are available.
