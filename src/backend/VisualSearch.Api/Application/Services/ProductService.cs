@@ -308,7 +308,8 @@ public sealed class ProductService
         }
 
         // Delete all images first
-        foreach (var image in product.Images)
+        var toBeDeletedImages = product.Images.ToList();
+        foreach (var image in toBeDeletedImages)
         {
             await _productImageRepository.DeleteAsync(image, cancellationToken);
         }
