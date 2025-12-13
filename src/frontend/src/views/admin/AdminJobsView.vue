@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, onUnmounted, watch } from 'vue'
 import { api } from '@/api/client'
+import AdminPageHeader from '@/components/admin/AdminPageHeader.vue'
+import LoadingState from '@/components/admin/LoadingState.vue'
+import EmptyState from '@/components/admin/EmptyState.vue'
+import ErrorState from '@/components/admin/ErrorState.vue'
 
 // Types
 interface ProviderDto {
@@ -72,6 +76,9 @@ const createForm = ref<CreateJobForm>({
 
 // Action states
 const actionInProgress = ref<number | null>(null)
+
+// Expanded rows
+const expandedRows = ref<Set<number>>(new Set())
 
 // SSE
 const sseConnection = ref<EventSource | null>(null)
@@ -375,21 +382,34 @@ function goToPage(page: number) {
   currentPage.value = page
   loadJobs()
 }
+
+function toggleRowExpansion(jobId: number) {
+  if (expandedRows.value.has(jobId)) {
+    expandedRows.value.delete(jobId)
+  } else {
+    expandedRows.value.add(jobId)
+  }
+  // Force reactivity update
+  expandedRows.value = new Set(expandedRows.value)
+}
+
+function isRowExpanded(jobId: number): boolean {
+  return expandedRows.value.has(jobId)
+}
 </script>
 
 <template>
   <div class="admin-jobs">
-    <header class="admin-jobs__header">
-      <div class="admin-jobs__title-row">
-        <div>
-          <h1 class="page-title">Crawl Jobs</h1>
-          <p class="admin-jobs__subtitle">Manage and monitor product crawling jobs</p>
-        </div>
+    <AdminPageHeader
+      title="Crawl Jobs"
+      subtitle="Manage and monitor product crawling jobs"
+    >
+      <template #actions>
         <button class="btn btn--primary" @click="openCreateModal">
           + New Job
         </button>
-      </div>
-    </header>
+      </template>
+    </AdminPageHeader>
 
     <!-- Stats Cards -->
     <div v-if="stats" class="admin-jobs__stats">
@@ -435,25 +455,21 @@ function goToPage(page: number) {
       </button>
     </div>
 
-    <!-- Error Message -->
-    <div v-if="error" class="admin-jobs__error card">
-      <p>{{ error }}</p>
-      <button class="btn btn--sm btn--outline" @click="loadJobs">Retry</button>
-    </div>
+    <!-- Error Message --> 
+    <ErrorState v-if="error" :message="error" @retry="loadJobs" />
 
     <!-- Loading State -->
-    <div v-if="isLoading && jobs.length === 0" class="admin-jobs__loading">
-      <span class="spinner"></span>
-      <p>Loading jobs...</p>
-    </div>
+    <LoadingState v-if="isLoading && jobs.length === 0" message="Loading jobs..." />
 
     <!-- Empty State -->
-    <div v-else-if="jobs.length === 0" class="admin-jobs__empty card">
-      <span class="admin-jobs__empty-icon">🕷️</span>
-      <h3>No crawl jobs yet</h3>
-      <p>Create your first crawl job to start importing products</p>
-      <button class="btn btn--primary" @click="openCreateModal">+ New Job</button>
-    </div>
+    <EmptyState
+      v-else-if="jobs.length === 0"
+      icon="🕷️"
+      title="No crawl jobs yet"
+      message="Create your first crawl job to start importing products"
+      action-label="+ New Job"
+      @action="openCreateModal"
+    />
 
     <!-- Jobs Table -->
     <div v-else class="admin-jobs__table-container card">
@@ -472,58 +488,81 @@ function goToPage(page: number) {
           </tr>
         </thead>
         <tbody>
-          <tr v-for="job in jobs" :key="job.id">
-            <td class="admin-jobs__id">#{{ job.id }}</td>
-            <td>{{ job.providerName }}</td>
-            <td>
-              <span class="status-badge" :class="getStatusClass(job.status)">
-                {{ getStatusLabel(job.status) }}
-              </span>
-            </td>
-            <td>
-              <div class="progress-cell">
-                <div class="progress-bar">
-                  <div
-                    class="progress-bar__fill"
-                    :style="{ width: job.pagesTotal > 0 ? `${(job.pagesProcessed / job.pagesTotal) * 100}%` : '0%' }"
-                  ></div>
+          <template v-for="job in jobs" :key="job.id">
+            <tr 
+              class="job-row"
+              :class="{ 'job-row--expanded': isRowExpanded(job.id), 'job-row--clickable': job.lastError }"
+              @click="job.lastError ? toggleRowExpansion(job.id) : null"
+            >
+              <td class="admin-jobs__id">
+                <span v-if="job.lastError" class="expand-icon">
+                  {{ isRowExpanded(job.id) ? '▼' : '▶' }}
+                </span>
+                #{{ job.id }}
+              </td>
+              <td>{{ job.providerName }}</td>
+              <td>
+                <span class="status-badge" :class="getStatusClass(job.status)">
+                  {{ getStatusLabel(job.status) }}
+                </span>
+              </td>
+              <td>
+                <div class="progress-cell">
+                  <div class="progress-bar">
+                    <div
+                      class="progress-bar__fill"
+                      :style="{ width: job.pagesTotal > 0 ? `${(job.pagesProcessed / job.pagesTotal) * 100}%` : '0%' }"
+                    ></div>
+                  </div>
+                  <span class="progress-text">{{ job.pagesProcessed }} / {{ job.pagesTotal }}</span>
                 </div>
-                <span class="progress-text">{{ job.pagesProcessed }} / {{ job.pagesTotal }}</span>
-              </div>
-            </td>
-            <td>{{ job.productsExtracted }}</td>
-            <td :class="{ 'text-danger': job.errorsCount > 0 }">
-              {{ job.errorsCount }}
-            </td>
-            <td>{{ formatDate(job.createdAtUtc) }}</td>
-            <td>{{ formatDuration(job.startedAtUtc, job.finishedAtUtc) }}</td>
-            <td class="admin-jobs__actions">
-              <button
-                v-if="job.status === 'Queued' || job.status === 'Running'"
-                class="btn btn--sm btn--danger"
-                :disabled="actionInProgress === job.id"
-                @click="cancelJob(job.id)"
-              >
-                Cancel
-              </button>
-              <button
-                v-if="job.status === 'Failed' || job.status === 'Canceled'"
-                class="btn btn--sm btn--outline"
-                :disabled="actionInProgress === job.id"
-                @click="retryJob(job.id)"
-              >
-                Retry
-              </button>
-              <button
-                v-if="job.status === 'Succeeded' || job.status === 'Failed' || job.status === 'Canceled'"
-                class="btn btn--sm btn--ghost"
-                :disabled="actionInProgress === job.id"
-                @click="deleteJob(job.id)"
-              >
-                🗑️
-              </button>
-            </td>
-          </tr>
+              </td>
+              <td>{{ job.productsExtracted }}</td>
+              <td :class="{ 'text-danger': job.errorsCount > 0 }">
+                <span v-if="job.lastError" class="error-icon" title="Click row to see error details">⚠️ </span>
+                {{ job.errorsCount }}
+                <span v-if="job.lastError" class="click-hint"> (click to view)</span>
+              </td>
+              <td>{{ formatDate(job.createdAtUtc) }}</td>
+              <td>{{ formatDuration(job.startedAtUtc, job.finishedAtUtc) }}</td>
+              <td class="admin-jobs__actions" @click.stop>
+                <div class="actions-wrapper">
+                  <button
+                    v-if="job.status === 'Queued' || job.status === 'Running'"
+                    class="btn btn--sm btn--danger"
+                    :disabled="actionInProgress === job.id"
+                    @click="cancelJob(job.id)"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    v-if="job.status === 'Failed' || job.status === 'Canceled'"
+                    class="btn btn--sm btn--outline"
+                    :disabled="actionInProgress === job.id"
+                    @click="retryJob(job.id)"
+                  >
+                    Retry
+                  </button>
+                  <button
+                    v-if="job.status === 'Succeeded' || job.status === 'Failed' || job.status === 'Canceled'"
+                    class="btn btn--sm btn--ghost"
+                    :disabled="actionInProgress === job.id"
+                    @click="deleteJob(job.id)"
+                  >
+                    🗑️
+                  </button>
+                </div>
+              </td>
+            </tr>
+            <tr v-if="isRowExpanded(job.id) && job.lastError" class="job-details-row">
+              <td colspan="9" class="job-details">
+                <div class="error-details">
+                  <h4 class="error-details__title">Error Message:</h4>
+                  <pre class="error-details__message">{{ job.lastError }}</pre>
+                </div>
+              </td>
+            </tr>
+          </template>
         </tbody>
       </table>
 
@@ -633,22 +672,6 @@ function goToPage(page: number) {
 
 <style lang="scss" scoped>
 .admin-jobs {
-  &__header {
-    margin-bottom: var(--space-6);
-  }
-
-  &__title-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: var(--space-4);
-  }
-
-  &__subtitle {
-    color: var(--color-text-muted);
-    margin-bottom: 0;
-  }
-
   &__stats {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
@@ -663,38 +686,6 @@ function goToPage(page: number) {
     gap: var(--space-4);
     padding: var(--space-4);
     margin-bottom: var(--space-6);
-  }
-
-  &__error {
-    padding: var(--space-4);
-    background: var(--color-danger-bg);
-    border-color: var(--color-danger);
-    margin-bottom: var(--space-4);
-
-    p {
-      margin-bottom: var(--space-2);
-      color: var(--color-danger);
-    }
-  }
-
-  &__loading {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: var(--space-4);
-    padding: var(--space-10);
-    color: var(--color-text-muted);
-  }
-
-  &__empty {
-    text-align: center;
-    padding: var(--space-10);
-  }
-
-  &__empty-icon {
-    font-size: 3rem;
-    display: block;
-    margin-bottom: var(--space-4);
   }
 
   &__table-container {
@@ -718,19 +709,49 @@ function goToPage(page: number) {
       white-space: nowrap;
     }
 
-    tbody tr:hover {
+    tbody tr.job-row:hover {
       background: var(--color-bg-hover);
+    }
+
+    tbody tr.job-row--clickable {
+      cursor: pointer;
+      transition: background-color 0.2s ease;
+      
+      &:hover {
+        background: var(--color-bg-hover) !important;
+        box-shadow: inset 3px 0 0 var(--color-primary);
+      }
+    }
+
+    tbody tr.job-row--expanded {
+      background: var(--color-bg-hover);
+      box-shadow: inset 3px 0 0 var(--color-primary);
     }
   }
 
   &__id {
     font-family: var(--font-mono);
     color: var(--color-text-muted);
+    
+    .expand-icon {
+      display: inline-block;
+      width: 16px;
+      font-size: 12px;
+      margin-right: var(--space-2);
+      color: var(--color-primary);
+      font-weight: bold;
+      transition: transform 0.2s ease;
+    }
   }
 
   &__actions {
-    display: flex;
-    gap: var(--space-2);
+    white-space: nowrap;
+    
+    .actions-wrapper {
+      display: inline-flex;
+      gap: var(--space-2);
+      align-items: center;
+    }
   }
 
   &__pagination {
@@ -857,6 +878,55 @@ function goToPage(page: number) {
 .text-danger {
   color: var(--color-danger);
   font-weight: 600;
+}
+
+.error-icon {
+  font-size: var(--text-sm);
+}
+
+.click-hint {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  font-style: italic;
+  margin-left: var(--space-1);
+}
+
+.job-details-row {
+  background: var(--color-bg-subtle) !important;
+  
+  &:hover {
+    background: var(--color-bg-subtle) !important;
+  }
+}
+
+.job-details {
+  padding: var(--space-4) var(--space-6) !important;
+  border-bottom: 2px solid var(--color-border) !important;
+}
+
+.error-details {
+  &__title {
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--color-danger);
+    margin: 0 0 var(--space-2) 0;
+  }
+
+  &__message {
+    background: var(--color-surface, #ffffff);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    padding: var(--space-3);
+    margin: 0;
+    font-family: var(--font-mono, 'Courier New', monospace);
+    font-size: var(--text-xs);
+    color: var(--color-text-primary);
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    overflow-x: auto;
+    max-height: 300px;
+    overflow-y: auto;
+  }
 }
 
 // Modal styles
