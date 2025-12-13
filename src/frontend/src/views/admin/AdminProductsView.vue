@@ -2,6 +2,7 @@
 import { ref, onMounted, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '@/api/client'
+import ConfirmModal from '@/components/ConfirmModal.vue'
 
 interface ProductImageDto {
   id: number
@@ -374,32 +375,17 @@ function formatPrice(price: number, currency?: string): string {
     </template>
 
     <!-- Delete Confirmation Modal -->
-    <Teleport to="body">
-      <div v-if="showDeleteConfirm" class="modal-overlay" @click.self="cancelDelete">
-        <div class="modal modal--sm">
-          <div class="modal__header">
-            <h2 class="modal__title">Delete Product</h2>
-          </div>
-          <div class="modal__body">
-            <p>
-              Are you sure you want to delete <strong>{{ deletingProduct?.name }}</strong>?
-            </p>
-            <p class="text-muted">This will also delete all associated images. This action cannot be undone.</p>
-          </div>
-          <div class="modal__footer">
-            <button class="btn btn--secondary" @click="cancelDelete">Cancel</button>
-            <button
-              class="btn btn--danger"
-              :disabled="isDeleting"
-              @click="deleteProduct"
-            >
-              <span v-if="isDeleting" class="spinner spinner--sm"></span>
-              {{ isDeleting ? 'Deleting...' : 'Delete' }}
-            </button>
-          </div>
-        </div>
-      </div>
-    </Teleport>
+    <ConfirmModal
+      v-model="showDeleteConfirm"
+      title="Delete Product"
+      :message="`<p>Are you sure you want to delete <strong>${deletingProduct?.name}</strong>?</p><p class='text-muted'>This will also delete all associated images. This action cannot be undone.</p>`"
+      confirm-text="Delete"
+      cancel-text="Cancel"
+      :is-loading="isDeleting"
+      variant="danger"
+      @confirm="deleteProduct"
+      @cancel="cancelDelete"
+    />
   </div>
 </template>
 

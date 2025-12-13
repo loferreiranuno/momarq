@@ -3,9 +3,13 @@ import { ref, onMounted } from 'vue'
 import ProductCard from '@/components/search/ProductCard.vue'
 import { getFavorites, clearFavorites, type FavoriteItem } from '@/db'
 import { Heart, Trash2, Search } from 'lucide-vue-next'
+import ConfirmModal from '@/components/ConfirmModal.vue'
 
 const favorites = ref<FavoriteItem[]>([])
 const isLoading = ref(true)
+
+// Clear favorites confirmation
+const showClearConfirm = ref(false)
 
 onMounted(async () => {
   try {
@@ -15,11 +19,18 @@ onMounted(async () => {
   }
 })
 
+function handleClearFavoritesClick() {
+  showClearConfirm.value = true
+}
+
 async function handleClearFavorites() {
-  if (confirm('Are you sure you want to clear all favorites?')) {
-    await clearFavorites()
-    favorites.value = []
-  }
+  await clearFavorites()
+  favorites.value = []
+  showClearConfirm.value = false
+}
+
+function cancelClearFavorites() {
+  showClearConfirm.value = false
 }
 </script>
 
@@ -32,7 +43,7 @@ async function handleClearFavorites() {
         <button
           v-if="favorites.length > 0"
           class="favorites__clear-btn"
-          @click="handleClearFavorites"
+          @click="handleClearFavoritesClick"
         >
           <Trash2 :stroke-width="1.5" />
           Clear All
@@ -75,6 +86,18 @@ async function handleClearFavorites() {
       </div>
     </div>
   </div>
+
+  <!-- Clear Favorites Confirmation Modal -->
+  <ConfirmModal
+    v-model="showClearConfirm"
+    title="Clear All Favorites"
+    message="Are you sure you want to clear all favorites? This action cannot be undone."
+    confirm-text="Clear"
+    cancel-text="Cancel"
+    variant="danger"
+    @confirm="handleClearFavorites"
+    @cancel="cancelClearFavorites"
+  />
 </template>
 
 <style lang="scss" scoped>

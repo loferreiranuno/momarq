@@ -3,9 +3,13 @@ import { ref, onMounted } from 'vue'
 import ProductCard from '@/components/search/ProductCard.vue'
 import { getSearchHistory, clearSearchHistory, type SearchHistoryItem } from '@/db'
 import { Clock, Trash2, Search, Camera } from 'lucide-vue-next'
+import ConfirmModal from '@/components/ConfirmModal.vue'
 
 const history = ref<SearchHistoryItem[]>([])
 const isLoading = ref(true)
+
+// Clear history confirmation
+const showClearConfirm = ref(false)
 
 onMounted(async () => {
   try {
@@ -15,11 +19,18 @@ onMounted(async () => {
   }
 })
 
+function handleClearHistoryClick() {
+  showClearConfirm.value = true
+}
+
 async function handleClearHistory() {
-  if (confirm('Are you sure you want to clear your search history?')) {
-    await clearSearchHistory()
-    history.value = []
-  }
+  await clearSearchHistory()
+  history.value = []
+  showClearConfirm.value = false
+}
+
+function cancelClearHistory() {
+  showClearConfirm.value = false
 }
 
 function formatDate(timestamp: number): string {
@@ -42,7 +53,7 @@ function formatDate(timestamp: number): string {
         <button
           v-if="history.length > 0"
           class="history__clear-btn"
-          @click="handleClearHistory"
+          @click="handleClearHistoryClick"
         >
           <Trash2 :stroke-width="1.5" />
           Clear History
@@ -106,6 +117,18 @@ function formatDate(timestamp: number): string {
       </div>
     </div>
   </div>
+
+  <!-- Clear History Confirmation Modal -->
+  <ConfirmModal
+    v-model="showClearConfirm"
+    title="Clear Search History"
+    message="Are you sure you want to clear your search history? This action cannot be undone."
+    confirm-text="Clear"
+    cancel-text="Cancel"
+    variant="danger"
+    @confirm="handleClearHistory"
+    @cancel="cancelClearHistory"
+  />
 </template>
 
 <style lang="scss" scoped>

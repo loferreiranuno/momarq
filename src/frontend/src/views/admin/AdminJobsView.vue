@@ -3,6 +3,7 @@ import { ref, onMounted, computed, onUnmounted, watch } from 'vue'
 import { api } from '@/api/client'
 import AdminPageHeader from '@/components/admin/AdminPageHeader.vue'
 import LoadingState from '@/components/admin/LoadingState.vue'
+import ConfirmModal from '@/components/ConfirmModal.vue'
 import EmptyState from '@/components/admin/EmptyState.vue'
 import ErrorState from '@/components/admin/ErrorState.vue'
 
@@ -77,6 +78,10 @@ const createForm = ref<CreateJobForm>({
 
 // Action states
 const actionInProgress = ref<number | null>(null)
+
+// Delete confirmation
+const showDeleteConfirm = ref(false)
+const deletingJobId = ref<number | null>(null)
 
 // Expanded rows
 const expandedRows = ref<Set<number>>(new Set())
@@ -387,12 +392,24 @@ async function retryJob(jobId: number) {
   }
 }
 
-async function deleteJob(jobId: number) {
-  if (!confirm('Are you sure you want to delete this job?')) return
+function confirmDelete(jobId: number) {
+  deletingJobId.value = jobId
+  showDeleteConfirm.value = true
+}
+
+function cancelDelete() {
+  showDeleteConfirm.value = false
+  deletingJobId.value = null
+}
+
+async function deleteJob() {
+  if (!deletingJobId.value) return
   
-  actionInProgress.value = jobId
+  actionInProgress.value = deletingJobId.value
   try {
-    await api.delete(`/api/jobs/${jobId}`)
+    await api.delete(`/api/jobs/${deletingJobId.value}`)
+    showDeleteConfirm.value = false
+    deletingJobId.value = null
     await Promise.all([loadJobs(), loadStats()])
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Failed to delete job'
@@ -596,7 +613,7 @@ function isRowExpanded(jobId: number): boolean {
                     v-if="job.status === 'Succeeded' || job.status === 'Failed' || job.status === 'Canceled' || job.status === 'Paused'"
                     class="btn btn--sm btn--ghost"
                     :disabled="actionInProgress === job.id"
-                    @click="deleteJob(job.id)"
+                    @click="confirmDelete(job.id)"
                   >
                     🗑️
                   </button>
@@ -717,6 +734,19 @@ function isRowExpanded(jobId: number): boolean {
       </div>
     </Teleport>
   </div>
+
+  <!-- Delete Confirmation Modal -->
+  <ConfirmModal
+    v-model="showDeleteConfirm"
+    title="Delete Job"
+    message="Are you sure you want to delete this job? This action cannot be undone."
+    confirm-text="Delete"
+    cancel-text="Cancel"
+    :is-loading="actionInProgress === deletingJobId"
+    variant="danger"
+    @confirm="deleteJob"
+    @cancel="cancelDelete"
+  />
 </template>
 
 <style lang="scss" scoped>

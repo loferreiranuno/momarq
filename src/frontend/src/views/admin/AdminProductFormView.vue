@@ -2,6 +2,7 @@
 import { ref, onMounted, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { api } from '@/api/client'
+import ConfirmModal from '@/components/ConfirmModal.vue'
 
 interface ProductImageDto {
   id: number
@@ -92,6 +93,11 @@ const isDownloadingUrl = ref(false)
 const isDragging = ref(false)
 const fileInput = ref<HTMLInputElement | null>(null)
 const uploadProgress = ref(0)
+
+// Delete image confirmation
+const showDeleteImageConfirm = ref(false)
+const deletingImage = ref<ProductImageDto | null>(null)
+const isDeletingImage = ref(false)
 
 onMounted(async () => {
   await Promise.all([loadProviders(), loadCategories()])
@@ -390,15 +396,29 @@ async function setPrimaryImage(image: ProductImageDto) {
   }
 }
 
-async function deleteImage(image: ProductImageDto) {
-  if (!productId.value) return
-  if (!confirm('Are you sure you want to delete this image?')) return
+function confirmDeleteImage(image: ProductImageDto) {
+  deletingImage.value = image
+  showDeleteImageConfirm.value = true
+}
 
+function cancelDeleteImage() {
+  showDeleteImageConfirm.value = false
+  deletingImage.value = null
+}
+
+async function deleteImage() {
+  if (!productId.value || !deletingImage.value) return
+
+  isDeletingImage.value = true
   try {
-    await api.delete(`/api/admin/products/${productId.value}/images/${image.id}`)
+    await api.delete(`/api/admin/products/${productId.value}/images/${deletingImage.value.id}`)
+    showDeleteImageConfirm.value = false
+    deletingImage.value = null
     await loadProduct()
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Failed to delete image'
+  } finally {
+    isDeletingImage.value = false
   }
 }
 
@@ -656,7 +676,7 @@ function goBack() {
                   <button
                     class="btn btn--sm btn--ghost"
                     title="Delete"
-                    @click="deleteImage(image)"
+                    @click="confirmDeleteImage(image)"
                   >
                     🗑️
                   </button>
@@ -673,6 +693,19 @@ function goBack() {
       </div>
     </template>
   </div>
+
+  <!-- Delete Image Confirmation Modal -->
+  <ConfirmModal
+    v-model="showDeleteImageConfirm"
+    title="Delete Image"
+    message="Are you sure you want to delete this image? This action cannot be undone."
+    confirm-text="Delete"
+    cancel-text="Cancel"
+    :is-loading="isDeletingImage"
+    variant="danger"
+    @confirm="deleteImage"
+    @cancel="cancelDeleteImage"
+  />
 </template>
 
 <style lang="scss" scoped>
