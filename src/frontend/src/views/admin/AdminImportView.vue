@@ -395,8 +395,8 @@ async function bulkReject() {
           @keyup.enter="handleFilterChange"
         />
       </div>
-      <button class="btn btn--sm btn--outline" @click="handleFilterChange">
-        🔍 Search
+      <button class="btn btn--sm btn--secondary" @click="handleFilterChange">
+        Search
       </button>
     </div>
 
@@ -415,14 +415,14 @@ async function bulkReject() {
         :disabled="bulkActionInProgress"
         @click="bulkApprove"
       >
-        ✓ Approve Selected
+        Approve Selected
       </button>
       <button
         class="btn btn--sm btn--danger"
         :disabled="bulkActionInProgress"
         @click="bulkReject"
       >
-        ✗ Reject Selected
+        Reject Selected
       </button>
     </div>
 
@@ -508,26 +508,29 @@ async function bulkReject() {
                 <template v-if="statusToLabel(product.status) === 'Pending'">
                   <button
                     class="btn btn--sm btn--success"
+                    title="Approve"
                     :disabled="actionInProgress === product.id"
                     @click="openApproveModal(product.id)"
                   >
-                    ✓
+                    Approve
                   </button>
                   <button
                     class="btn btn--sm btn--danger"
+                    title="Reject"
                     :disabled="actionInProgress === product.id"
                     @click="rejectProduct(product.id)"
                   >
-                    ✗
+                    Reject
                   </button>
                 </template>
                 <button
                   v-else
                   class="btn btn--sm btn--outline"
+                  title="Reset to Pending"
                   :disabled="actionInProgress === product.id"
                   @click="resetProduct(product.id)"
                 >
-                  ↺
+                  Reset
                 </button>
               </div>
             </td>
@@ -559,13 +562,13 @@ async function bulkReject() {
 
     <!-- Approve Modal -->
     <Teleport to="body">
-      <div v-if="showApproveModal" class="modal-overlay" @click.self="closeApproveModal">
-        <div class="modal modal--sm">
-          <div class="modal__header">
-            <h2 class="modal__title">Approve Product</h2>
-            <button class="modal__close" @click="closeApproveModal">×</button>
+      <div v-if="showApproveModal" class="import-modal-overlay" @click.self="closeApproveModal">
+        <div class="import-modal">
+          <div class="import-modal__header">
+            <h2 class="import-modal__title">Approve Product</h2>
+            <button class="import-modal__close" @click="closeApproveModal">&times;</button>
           </div>
-          <div class="modal__body">
+          <div class="import-modal__body">
             <div class="form-group">
               <label for="approve-category" class="form-label">Category (Optional)</label>
               <select id="approve-category" v-model="selectedCategoryId" class="form-select">
@@ -574,7 +577,7 @@ async function bulkReject() {
               </select>
               <small class="form-hint">Assign a category to the imported product</small>
             </div>
-            <div class="modal__actions">
+            <div class="import-modal__actions">
               <button type="button" class="btn btn--outline" @click="closeApproveModal">
                 Cancel
               </button>
@@ -594,7 +597,7 @@ async function bulkReject() {
   </div>
 </template>
 
-<style lang="scss" scoped>
+<style lang="scss">
 .admin-import {
   &__stats {
     display: grid;
@@ -804,7 +807,7 @@ async function bulkReject() {
   color: var(--color-text-secondary);
 }
 
-.modal-overlay {
+.import-modal-overlay {
   position: fixed;
   inset: 0;
   display: flex;
@@ -814,16 +817,12 @@ async function bulkReject() {
   z-index: 1000;
 }
 
-.modal {
-  background: var(--color-bg);
+.import-modal {
+  background: var(--color-surface);
   border-radius: var(--radius-lg);
-  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
-  max-width: 500px;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+  max-width: 400px;
   width: 90%;
-
-  &--sm {
-    max-width: 400px;
-  }
 
   &__header {
     display: flex;
@@ -879,5 +878,30 @@ async function bulkReject() {
   font-size: 0.875rem;
   color: var(--color-text-secondary);
   margin-top: var(--space-1);
+}
+
+.form-select,
+.form-input {
+  padding: var(--space-2) var(--space-3);
+  font-size: 0.875rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background-color: var(--color-surface);
+  color: var(--color-text);
+  min-width: 150px;
+
+  &:focus {
+    outline: none;
+    border-color: var(--color-primary);
+  }
+}
+
+.form-select {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%236b7280' d='M3 4.5L6 7.5L9 4.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.75rem center;
+  padding-right: 2rem;
+  cursor: pointer;
 }
 </style>

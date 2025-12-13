@@ -218,7 +218,11 @@ public static class ProductImportEndpoints
 
     private static int? GetAdminUserId(HttpContext context)
     {
-        var userIdClaim = context.User.FindFirst("userId")?.Value;
+        // JWT tokens use "sub" claim (JwtRegisteredClaimNames.Sub) for user ID
+        var userIdClaim = context.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+            ?? context.User.FindFirst("sub")?.Value
+            ?? context.User.FindFirst("userId")?.Value;
+        
         if (int.TryParse(userIdClaim, out var uid))
         {
             return uid;
