@@ -198,6 +198,29 @@ var results = await _dbContext.ProductImages
 - **Repositories**: `I{Entity}Repository` / `{Entity}Repository`
 - **Services**: `{Domain}Service`
 - **DTOs**: `{Entity}Dto`
+
+## Server-Sent Events (SSE)
+
+Use SSE for real-time UI updates instead of polling when feasible.
+
+### Authenticated SSE (EventSource)
+
+`EventSource` cannot send `Authorization` headers. Do NOT put JWTs in query strings.
+
+Use the project pattern:
+- Mint a short-lived, single-use SSE ticket with an authenticated call: `POST /api/auth/sse-ticket` (requires Admin)
+- Connect SSE with the ticket in the query string: `GET /api/jobs/sse?ticket=...`
+
+Tickets must be:
+- Short-lived (seconds/minute range)
+- Single-purpose (scoped to one SSE endpoint/purpose)
+- Single-use (consume on first connection)
+
+### Reverse proxies
+
+SSE requires proxy buffering to be disabled and long read timeouts.
+- Traefik: use `sse-chain` middleware and a dedicated SSE router with `responseforwarding.flushinterval`
+- Nginx (dev reverse proxy): add an explicit SSE location with `proxy_buffering off` and long `proxy_read_timeout`
 - **Requests**: `Create{Entity}Request`, `Update{Entity}Request`
 
 ## Migrations

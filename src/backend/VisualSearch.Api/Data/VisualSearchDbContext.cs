@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Pgvector.EntityFrameworkCore;
 using VisualSearch.Api.Data.Entities;
+using VisualSearch.Contracts.Crawling;
 
 namespace VisualSearch.Api.Data;
 
@@ -10,6 +11,9 @@ namespace VisualSearch.Api.Data;
 /// </summary>
 public class VisualSearchDbContext : DbContext
 {
+    private const string CreatedAtColumnName = "created_at";
+    private const string CurrentTimestampSql = "CURRENT_TIMESTAMP";
+
     /// <summary>
     /// Initializes a new instance of the <see cref="VisualSearchDbContext"/> class.
     /// </summary>
@@ -49,6 +53,21 @@ public class VisualSearchDbContext : DbContext
     /// </summary>
     public DbSet<Category> Categories => Set<Category>();
 
+    /// <summary>
+    /// Gets or sets the crawl jobs DbSet.
+    /// </summary>
+    public DbSet<CrawlJob> CrawlJobs => Set<CrawlJob>();
+
+    /// <summary>
+    /// Gets or sets the crawl pages DbSet.
+    /// </summary>
+    public DbSet<CrawlPage> CrawlPages => Set<CrawlPage>();
+
+    /// <summary>
+    /// Gets or sets the extracted products from crawling DbSet.
+    /// </summary>
+    public DbSet<CrawlExtractedProduct> CrawlExtractedProducts => Set<CrawlExtractedProduct>();
+
     /// <inheritdoc/>
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -80,9 +99,17 @@ public class VisualSearchDbContext : DbContext
                 .HasColumnName("website_url")
                 .HasMaxLength(1024);
 
+            entity.Property(e => e.CrawlerType)
+                .HasColumnName("crawler_type")
+                .HasMaxLength(50);
+
+            entity.Property(e => e.CrawlerConfigJson)
+                .HasColumnName("crawler_config_json")
+                .HasColumnType("jsonb");
+
             entity.Property(e => e.CreatedAt)
-                .HasColumnName("created_at")
-                .HasDefaultValueSql("CURRENT_TIMESTAMP");
+                .HasColumnName(CreatedAtColumnName)
+                .HasDefaultValueSql(CurrentTimestampSql);
 
             entity.HasIndex(e => e.Name)
                 .IsUnique();
@@ -131,8 +158,8 @@ public class VisualSearchDbContext : DbContext
                 .HasMaxLength(1024);
 
             entity.Property(e => e.CreatedAt)
-                .HasColumnName("created_at")
-                .HasDefaultValueSql("CURRENT_TIMESTAMP");
+                .HasColumnName(CreatedAtColumnName)
+                .HasDefaultValueSql(CurrentTimestampSql);
 
             entity.HasOne(e => e.Provider)
                 .WithMany(p => p.Products)
@@ -182,8 +209,8 @@ public class VisualSearchDbContext : DbContext
                 .HasDefaultValue(false);
 
             entity.Property(e => e.CreatedAt)
-                .HasColumnName("created_at")
-                .HasDefaultValueSql("CURRENT_TIMESTAMP");
+                .HasColumnName(CreatedAtColumnName)
+                .HasDefaultValueSql(CurrentTimestampSql);
 
             entity.HasOne(e => e.Product)
                 .WithMany(p => p.Images)
@@ -227,7 +254,7 @@ public class VisualSearchDbContext : DbContext
 
             entity.Property(e => e.UpdatedAt)
                 .HasColumnName("updated_at")
-                .HasDefaultValueSql("CURRENT_TIMESTAMP");
+                .HasDefaultValueSql(CurrentTimestampSql);
 
             entity.HasIndex(e => e.Category);
         });
@@ -257,8 +284,8 @@ public class VisualSearchDbContext : DbContext
                 .HasDefaultValue(true);
 
             entity.Property(e => e.CreatedAt)
-                .HasColumnName("created_at")
-                .HasDefaultValueSql("CURRENT_TIMESTAMP");
+                .HasColumnName(CreatedAtColumnName)
+                .HasDefaultValueSql(CurrentTimestampSql);
 
             entity.Property(e => e.LastLoginAt)
                 .HasColumnName("last_login_at");
@@ -291,8 +318,8 @@ public class VisualSearchDbContext : DbContext
                 .HasDefaultValue(true);
 
             entity.Property(e => e.CreatedAt)
-                .HasColumnName("created_at")
-                .HasDefaultValueSql("CURRENT_TIMESTAMP");
+                .HasColumnName(CreatedAtColumnName)
+                .HasDefaultValueSql(CurrentTimestampSql);
 
             entity.HasIndex(e => e.CocoClassId)
                 .IsUnique();
@@ -301,6 +328,221 @@ public class VisualSearchDbContext : DbContext
                 .IsUnique();
 
             entity.HasIndex(e => e.DetectionEnabled);
+        });
+
+        // Configure CrawlJob entity
+        modelBuilder.Entity<CrawlJob>(entity =>
+        {
+            entity.ToTable("crawl_jobs");
+
+            entity.HasKey(e => e.Id);
+
+            entity.Property(e => e.Id)
+                .HasColumnName("id");
+
+            entity.Property(e => e.ProviderId)
+                .HasColumnName("provider_id");
+
+            entity.Property(e => e.RequestedByAdminUserId)
+                .HasColumnName("requested_by_admin_user_id");
+
+            entity.Property(e => e.StartUrl)
+                .HasColumnName("start_url")
+                .HasMaxLength(2048)
+                .IsRequired();
+
+            entity.Property(e => e.SitemapUrl)
+                .HasColumnName("sitemap_url")
+                .HasMaxLength(2048);
+
+            entity.Property(e => e.MaxPages)
+                .HasColumnName("max_pages");
+
+            entity.Property(e => e.Status)
+                .HasColumnName("status")
+                .HasConversion<int>()
+                .HasDefaultValue(CrawlJobStatus.Queued);
+
+            entity.Property(e => e.LeaseOwner)
+                .HasColumnName("lease_owner")
+                .HasMaxLength(200);
+
+            entity.Property(e => e.LeaseExpiresAt)
+                .HasColumnName("lease_expires_at");
+
+            entity.Property(e => e.ErrorMessage)
+                .HasColumnName("error_message")
+                .HasMaxLength(2000);
+
+            entity.Property(e => e.CreatedAt)
+                .HasColumnName(CreatedAtColumnName)
+                .HasDefaultValueSql(CurrentTimestampSql);
+
+            entity.Property(e => e.StartedAt)
+                .HasColumnName("started_at");
+
+            entity.Property(e => e.CompletedAt)
+                .HasColumnName("completed_at");
+
+            entity.Property(e => e.CanceledAt)
+                .HasColumnName("canceled_at");
+
+            entity.HasOne(e => e.Provider)
+                .WithMany()
+                .HasForeignKey(e => e.ProviderId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(e => e.RequestedByAdminUser)
+                .WithMany()
+                .HasForeignKey(e => e.RequestedByAdminUserId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasIndex(e => e.ProviderId);
+            entity.HasIndex(e => e.Status);
+            entity.HasIndex(e => new { e.Status, e.LeaseExpiresAt });
+            entity.HasIndex(e => e.CreatedAt);
+        });
+
+        // Configure CrawlPage entity
+        modelBuilder.Entity<CrawlPage>(entity =>
+        {
+            entity.ToTable("crawl_pages");
+
+            entity.HasKey(e => e.Id);
+
+            entity.Property(e => e.Id)
+                .HasColumnName("id");
+
+            entity.Property(e => e.CrawlJobId)
+                .HasColumnName("crawl_job_id");
+
+            entity.Property(e => e.Url)
+                .HasColumnName("url")
+                .HasMaxLength(2048)
+                .IsRequired();
+
+            entity.Property(e => e.Status)
+                .HasColumnName("status")
+                .HasConversion<int>()
+                .HasDefaultValue(CrawlPageStatus.Queued);
+
+            entity.Property(e => e.HttpStatusCode)
+                .HasColumnName("http_status_code");
+
+            entity.Property(e => e.ContentType)
+                .HasColumnName("content_type")
+                .HasMaxLength(255);
+
+            entity.Property(e => e.Title)
+                .HasColumnName("title")
+                .HasMaxLength(512);
+
+            entity.Property(e => e.ContentSha256)
+                .HasColumnName("content_sha256")
+                .HasMaxLength(64);
+
+            entity.Property(e => e.Content)
+                .HasColumnName("content")
+                .HasColumnType("text");
+
+            entity.Property(e => e.ErrorMessage)
+                .HasColumnName("error_message")
+                .HasMaxLength(2000);
+
+            entity.Property(e => e.CreatedAt)
+                .HasColumnName(CreatedAtColumnName)
+                .HasDefaultValueSql(CurrentTimestampSql);
+
+            entity.Property(e => e.FetchedAt)
+                .HasColumnName("fetched_at");
+
+            entity.HasOne(e => e.CrawlJob)
+                .WithMany(j => j.Pages)
+                .HasForeignKey(e => e.CrawlJobId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasIndex(e => e.CrawlJobId);
+            entity.HasIndex(e => e.Status);
+            entity.HasIndex(e => new { e.CrawlJobId, e.Url }).IsUnique();
+            entity.HasIndex(e => e.CreatedAt);
+        });
+
+        // Configure CrawlExtractedProduct entity
+        modelBuilder.Entity<CrawlExtractedProduct>(entity =>
+        {
+            entity.ToTable("crawl_extracted_products");
+
+            entity.HasKey(e => e.Id);
+
+            entity.Property(e => e.Id)
+                .HasColumnName("id");
+
+            entity.Property(e => e.CrawlJobId)
+                .HasColumnName("crawl_job_id");
+
+            entity.Property(e => e.CrawlPageId)
+                .HasColumnName("crawl_page_id");
+
+            entity.Property(e => e.ProviderId)
+                .HasColumnName("provider_id");
+
+            entity.Property(e => e.ExternalId)
+                .HasColumnName("external_id")
+                .HasMaxLength(255);
+
+            entity.Property(e => e.Name)
+                .HasColumnName("name")
+                .HasMaxLength(500);
+
+            entity.Property(e => e.Description)
+                .HasColumnName("description")
+                .HasMaxLength(4000);
+
+            entity.Property(e => e.Price)
+                .HasColumnName("price")
+                .HasPrecision(10, 2);
+
+            entity.Property(e => e.Currency)
+                .HasColumnName("currency")
+                .HasMaxLength(3);
+
+            entity.Property(e => e.ProductUrl)
+                .HasColumnName("product_url")
+                .HasMaxLength(2048);
+
+            entity.Property(e => e.ImageUrlsJson)
+                .HasColumnName("image_urls_json")
+                .HasColumnType("text");
+
+            entity.Property(e => e.RawJson)
+                .HasColumnName("raw_json")
+                .HasColumnType("text");
+
+            entity.Property(e => e.CreatedAt)
+                .HasColumnName(CreatedAtColumnName)
+                .HasDefaultValueSql(CurrentTimestampSql);
+
+            entity.HasOne(e => e.CrawlJob)
+                .WithMany(j => j.ExtractedProducts)
+                .HasForeignKey(e => e.CrawlJobId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.CrawlPage)
+                .WithMany(p => p.ExtractedProducts)
+                .HasForeignKey(e => e.CrawlPageId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(e => e.Provider)
+                .WithMany()
+                .HasForeignKey(e => e.ProviderId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasIndex(e => e.CrawlJobId);
+            entity.HasIndex(e => e.CrawlPageId);
+            entity.HasIndex(e => e.ProviderId);
+            entity.HasIndex(e => new { e.ProviderId, e.ExternalId })
+                .HasFilter("external_id IS NOT NULL");
+            entity.HasIndex(e => e.CreatedAt);
         });
     }
 }

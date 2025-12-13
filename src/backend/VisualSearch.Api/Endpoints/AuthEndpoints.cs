@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using VisualSearch.Api.Application.Services;
+using VisualSearch.Api.Services;
 
 namespace VisualSearch.Api.Endpoints;
 
@@ -38,6 +39,14 @@ public static class AuthEndpoints
             .Produces(401)
             .WithName("GetCurrentUser")
             .WithDescription("Gets the current authenticated user's information.");
+
+        group.MapPost("/sse-ticket", HandleCreateSseTicketAsync)
+            .RequireAuthorization("Admin")
+            .Produces<CreateSseTicketResponse>(200)
+            .Produces(400)
+            .Produces(401)
+            .WithName("CreateSseTicket")
+            .WithDescription("Issues a short-lived, one-time SSE ticket for EventSource authentication.");
     }
 
     private static async Task<IResult> HandleLoginAsync(
@@ -100,6 +109,37 @@ public static class AuthEndpoints
             MustChangePassword = currentUser.MustChangePassword
         });
     }
+
+    private static IResult HandleCreateSseTicketAsync(
+        CreateSseTicketRequest request,
+        ClaimsPrincipal user,
+        SseTicketService sseTicketService)
+    {
+        if (string.IsNullOrWhiteSpace(request.Purpose))
+        {
+            return Results.BadRequest(new { error = "Purpose is required" });
+        }
+
+        var subject = user.FindFirst(ClaimTypes.Name)?.Value;
+        var issued = sseTicketService.Issue(request.Purpose.Trim(), subject);
+
+        return Results.Ok(new CreateSseTicketResponse
+        {
+            Ticket = issued.Ticket,
+            ExpiresAt = issued.ExpiresAt
+        });
+    }
+}
+
+public sealed record CreateSseTicketRequest
+{
+    public required string Purpose { get; init; }
+}
+
+public sealed record CreateSseTicketResponse
+{
+    public required string Ticket { get; init; }
+    public required DateTimeOffset ExpiresAt { get; init; }
 }
 
 /// <summary>

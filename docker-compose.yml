@@ -24,8 +24,8 @@ services:
   # .NET API
   api:
     build:
-      context: ./src/backend/VisualSearch.Api
-      dockerfile: Dockerfile
+      context: ./src/backend
+      dockerfile: VisualSearch.Api/Dockerfile
     container_name: visualsearch-api
     ports:
       - "5000:8080"
@@ -51,6 +51,33 @@ services:
           memory: 2G
         reservations:
           memory: 1G
+    restart: unless-stopped
+    networks:
+      - visualsearch-network
+
+  # Crawl job worker service
+  worker:
+    build:
+      context: .
+      dockerfile: src/backend/VisualSearch.Worker/Dockerfile
+    container_name: visualsearch-worker
+    environment:
+      - DOTNET_ENVIRONMENT=Development
+      - ConnectionStrings__DefaultConnection=Host=postgres;Database=visualsearch;Username=vsuser;Password=vspassword123
+      - Worker__InstanceId=worker-docker-1
+      - Worker__PollIntervalSeconds=10
+      - Worker__LeaseMinutes=5
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
     restart: unless-stopped
     networks:
       - visualsearch-network

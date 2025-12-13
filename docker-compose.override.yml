@@ -6,8 +6,8 @@ services:
 
   api:
     build:
-      context: ./src/backend/VisualSearch.Api
-      dockerfile: Dockerfile
+      context: ./src/backend
+      dockerfile: VisualSearch.Api/Dockerfile
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       - ConnectionStrings__DefaultConnection=Host=postgres;Database=visualsearch;Username=vsuser;Password=vspassword123

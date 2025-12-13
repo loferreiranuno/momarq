@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using Pgvector;
@@ -12,9 +13,11 @@ using VisualSearch.Api.Data;
 namespace VisualSearch.Api.Migrations
 {
     [DbContext(typeof(VisualSearchDbContext))]
-    partial class VisualSearchDbContextModelSnapshot : ModelSnapshot
+    [Migration("20251213062357_AddCrawlingAudit")]
+    partial class AddCrawlingAudit
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -483,15 +486,6 @@ namespace VisualSearch.Api.Migrations
                         .HasColumnName("id");
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<string>("CrawlerConfigJson")
-                        .HasColumnType("jsonb")
-                        .HasColumnName("crawler_config_json");
-
-                    b.Property<string>("CrawlerType")
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)")
-                        .HasColumnName("crawler_type");
 
                     b.Property<DateTime>("CreatedAt")
                         .ValueGeneratedOnAdd()

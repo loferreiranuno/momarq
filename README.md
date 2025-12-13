@@ -10,8 +10,9 @@ A visual similarity search application using CLIP embeddings and pgvector for fa
 - **ASP.NET Core** - Minimal APIs with OpenAPI/Swagger
 - **Entity Framework Core 9** - PostgreSQL with pgvector
 - **JWT Bearer Authentication** - Admin panel security
-- **Server-Sent Events (SSE)** - Real-time settings invalidation
+- **Server-Sent Events (SSE)** - Real-time settings + jobs updates
 - **CLIP Embeddings** - Image similarity via SixLabors.ImageSharp
+- **Worker Service** - Background job processing for web crawling
 
 ### Frontend (Vue 3 + TypeScript)
 - **Vue 3** - Composition API with `<script setup>`
@@ -48,9 +49,162 @@ Endpoints → Application Services → Repositories → DbContext
 - 🔍 **Visual Search** - Upload an image to find similar products
 - ❤️ **Favorites** - Save products you like (stored locally)
 - 📜 **Search History** - Review past searches with thumbnails
+- 🕷️ **Web Crawling** - Background worker for product data extraction
 - 🛠️ **Admin Panel** - Configure application settings
 - 🔐 **JWT Authentication** - Secure admin access with forced password change
-- ⚡ **Real-time Updates** - SSE-based settings synchronization
+- ⚡ **Real-time Updates** - SSE-based settings + jobs synchronization
+
+## SSE (Server-Sent Events)
+
+The frontend uses SSE for always-on updates.
+
+- Settings SSE: `GET /api/settings/sse` (public)
+- Jobs SSE: `GET /api/jobs/sse?ticket=...` (requires one-time ticket)
+- SSE ticket minting: `POST /api/auth/sse-ticket` (Admin JWT via `Authorization` header)
+
+Why tickets? `EventSource` cannot send `Authorization` headers, so the UI mints a short-lived, single-use ticket over an authenticated call and then uses it in the SSE URL.
+
+## Crawl Job Worker
+
+The `VisualSearch.Worker` project is a .NET Worker Service that processes crawl jobs in the background.
+
+### Architecture
+
+```
+                         ┌─────────────────────┐
+                         │    API (Job CRUD)   │
+                         └──────────┬──────────┘
+                                    │ Creates jobs with Status=Queued
+                                    ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                        PostgreSQL                                │
+│  ┌─────────────┐  ┌─────────────┐  ┌──────────────────────────┐ │
+│  │  crawl_jobs │  │ crawl_pages │  │ crawl_extracted_products │ │
+│  │ lease_owner │  │   status    │  │       raw_json           │ │
+│  │lease_expires│  │   content   │  │       image_urls         │ │
+│  └─────────────┘  └─────────────┘  └──────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────┘
+                                    ▲
+                                    │ Claims jobs atomically (lease pattern)
+                                    │
+         ┌──────────────────────────┴───────────────────────────┐
+         │                  Worker Service                       │
+         │  ┌────────────────────────────────────────────────┐  │
+         │  │         CrawlJobWorkerService (Background)     │  │
+         │  │  - Polls for queued/expired jobs               │  │
+         │  │  - Claims via atomic SQL CTE                   │  │
+         │  │  - Renews lease during processing              │  │
+         │  └────────────────────────────────────────────────┘  │
+         │                          │                            │
+         │                          ▼                            │
+         │  ┌────────────────────────────────────────────────┐  │
+         │  │           CrawlerStrategyFactory               │  │
+         │  │  - Resolves strategy by provider.crawler_type  │  │
+         │  └────────────────────────────────────────────────┘  │
+         │           │                        │                  │
+         │           ▼                        ▼                  │
+         │  ┌─────────────────┐   ┌─────────────────────────┐   │
+         │  │GenericCrawler   │   │ Custom strategies       │   │
+         │  │- Sitemap parsing│   │ (ZaraHome, IKEA, etc.)  │   │
+         │  │- HTML crawling  │   │                         │   │
+         │  └─────────────────┘   └─────────────────────────┘   │
+         │                          │                            │
+         │                          ▼                            │
+         │  ┌────────────────────────────────────────────────┐  │
+         │  │         DefaultProductExtractor                │  │
+         │  │  - JSON-LD structured data                     │  │
+         │  │  - OpenGraph meta tags                         │  │
+         │  │  - HTML microdata                              │  │
+         │  │  - Custom CSS selectors                        │  │
+         │  └────────────────────────────────────────────────┘  │
+         └───────────────────────────────────────────────────────┘
+```
+
+### Strategy Pattern
+
+Each provider can have a custom crawling strategy configured via:
+
+| Column | Description |
+|--------|-------------|
+| `providers.crawler_type` | Strategy identifier (e.g., "generic", "sitemap", "api") |
+| `providers.crawler_config_json` | JSON configuration for the strategy |
+
+**Configuration example (JSON):**
+```json
+{
+  "crawlerType": "generic",
+  "userAgent": "VisualSearchBot/1.0",
+  "requestDelayMs": 1000,
+  "maxConcurrentRequests": 2,
+  "includePatterns": ["/products/", "/catalog/"],
+  "excludePatterns": ["/cart", "/checkout", "/login"],
+  "productContainerSelector": ".product-card",
+  "productNameSelector": ".product-title",
+  "productPriceSelector": ".product-price",
+  "productImageSelector": ".product-image img",
+  "paginationSelector": ".pagination a"
+}
+```
+
+### Lease-Based Job Claiming
+
+The worker uses atomic lease-based job claiming for distributed safety:
+
+1. **Claim**: Worker atomically claims a job by setting `lease_owner` and `lease_expires_at`
+2. **Process**: Worker processes pages, renewing the lease every 2 minutes
+3. **Complete**: On success/failure, worker clears the lease and sets final status
+
+This allows multiple worker instances to run safely without duplicate processing.
+
+### Adding Custom Strategies
+
+1. Create a new class implementing `ICrawlerStrategy`:
+```csharp
+public sealed class ZaraHomeCrawlerStrategy : ICrawlerStrategy
+{
+    public string CrawlerType => "zarahome";
+    
+    public Task<IReadOnlyList<string>> DiscoverUrlsAsync(...) { ... }
+    public Task<CrawlPageResult> CrawlPageAsync(...) { ... }
+}
+```
+
+2. Register in `Program.cs`:
+```csharp
+builder.Services.AddSingleton<ICrawlerStrategy, ZaraHomeCrawlerStrategy>();
+```
+
+3. Configure the provider:
+```sql
+UPDATE providers 
+SET crawler_type = 'zarahome', 
+    crawler_config_json = '{"apiKey": "...", ...}'
+WHERE name = 'Zara Home';
+```
+
+### Running the Worker
+
+**Standalone:**
+```bash
+cd src/backend/VisualSearch.Worker
+dotnet run
+```
+
+**Docker Compose (development):**
+```bash
+docker compose up worker
+```
+
+**Production:**
+The worker is included in `docker-compose.prod.yml` and starts automatically.
+
+**Scaling:**
+```yaml
+# docker-compose.prod.yml
+worker:
+  deploy:
+    replicas: 3  # Run 3 worker instances
+```
 
 ## Quick Start
 
@@ -137,6 +291,7 @@ Configure these secrets in your GitHub repository settings (`Settings > Secrets 
 Images are published to GitHub Container Registry:
 - `ghcr.io/loferreiranuno/momarq/api:latest`
 - `ghcr.io/loferreiranuno/momarq/frontend:latest`
+- `ghcr.io/loferreiranuno/momarq/worker:latest`
 
 ## Production Deployment
 
@@ -266,9 +421,9 @@ docker image prune -f
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `ConnectionStrings__DefaultConnection` | PostgreSQL connection string | See docker-compose |
-| `Jwt__Key` | JWT signing key (min 32 chars) | Auto-generated |
-| `Jwt__Issuer` | JWT issuer | `VisualSearchApi` |
-| `Jwt__Audience` | JWT audience | `VisualSearchApp` |
+| `Jwt__Key` | JWT signing key (min 32 chars) | `VisualSearch-Default-JWT-Key-Change-In-Production-2024!` |
+| `Jwt__Issuer` | JWT issuer | `VisualSearch.Api` |
+| `Jwt__Audience` | JWT audience | `VisualSearch.Frontend` |
 
 ### Frontend (via Settings API)
 | Key | Description | Default |
@@ -319,19 +474,7 @@ tests/
 | `CategoriesEndpoints` | ✅ Compliant | Uses `CategoryService` |
 | `ImageSearchEndpoints` | ✅ Compliant | Uses `VisualSearchService` |
 | `SettingsEndpoints` | ✅ Compliant | Uses `SettingsService` |
-| `AdminEndpoints` | ⚠️ Technical Debt | Direct DbContext access (28 violations) |
-
-### Technical Debt
-
-**AdminEndpoints.cs** (1371 lines) contains direct database access instead of using the existing Application Services. The required services already exist:
-
-- `ProviderService` - Provider CRUD operations
-- `ProductService` - Product CRUD with pagination
-- `CategoryService` - Category management
-- `ProductImageService` - Image upload and vectorization
-- `DashboardService` - Statistics and system status
-
-**Priority**: Medium - The code works correctly but violates Clean Architecture principles. Integration tests ensure behavioral correctness.
+| `AdminEndpoints` | ✅ Compliant | Uses Application Services (`ProviderService`, `ProductService`, etc.) |
 
 ## Project Structure
 
@@ -353,15 +496,22 @@ momarq/
 │       └── dynamic.yml         # Middleware definitions
 ├── src/
 │   ├── backend/
-│   │   └── VisualSearch.Api/
-│   │       ├── Application/    # Business logic services
-│   │       ├── Contracts/      # DTOs and request models
-│   │       ├── Data/           # EF Core DbContext & entities
-│   │       ├── Domain/         # Interfaces
-│   │       ├── Endpoints/      # Minimal API endpoints
-│   │       ├── Infrastructure/ # Repository implementations
-│   │       ├── Services/       # Infrastructure services
-│   │       └── Migrations/     # Database migrations
+│   │   ├── VisualSearch.Api/
+│   │   │   ├── Application/    # Business logic services
+│   │   │   ├── Contracts/      # DTOs and request models
+│   │   │   ├── Data/           # EF Core DbContext & entities
+│   │   │   ├── Domain/         # Interfaces
+│   │   │   ├── Endpoints/      # Minimal API endpoints
+│   │   │   ├── Infrastructure/ # Repository implementations
+│   │   │   ├── Services/       # Infrastructure services
+│   │   │   └── Migrations/     # Database migrations
+│   │   ├── VisualSearch.Worker/
+│   │   │   ├── Crawling/       # Crawler strategy interfaces
+│   │   │   │   └── Strategies/ # Strategy implementations
+│   │   │   ├── Data/           # Worker DbContext
+│   │   │   └── Services/       # CrawlJobWorkerService
+│   │   └── VisualSearch.Contracts/
+│   │       └── Crawling/       # Shared DTOs and enums
 │   └── frontend/
 │       └── src/
 │           ├── api/            # Generated API client
@@ -380,16 +530,17 @@ momarq/
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `POST` | `/api/search/image` | Upload image for similarity search |
-| `GET` | `/api/settings` | Get public settings |
+| `GET` | `/api/settings/public` | Get public settings |
 
 ### Admin (requires JWT)
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `POST` | `/api/auth/login` | Authenticate admin |
 | `POST` | `/api/auth/change-password` | Change admin password |
-| `GET` | `/api/auth/events` | SSE settings stream |
-| `GET` | `/api/settings/all` | Get all settings |
+| `GET` | `/api/auth/me` | Get current user |
+| `GET` | `/api/settings` | Get all settings |
 | `PUT` | `/api/settings/{key}` | Update setting |
+| `GET` | `/api/settings/sse` | SSE settings stream |
 | `GET` | `/api/admin/stats` | Get dashboard stats |
 | `GET` | `/api/admin/providers` | List providers |
 

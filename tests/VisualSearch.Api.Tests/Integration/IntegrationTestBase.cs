@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.DependencyInjection;
 using VisualSearch.Api.Data;
 using VisualSearch.Api.Data.Entities;
@@ -52,6 +53,7 @@ public abstract class IntegrationTestBase : IClassFixture<PostgresContainerFixtu
     {
         using var scope = AppFactory!.Services.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<VisualSearchDbContext>();
+        var passwordHasher = scope.ServiceProvider.GetRequiredService<IPasswordHasher<AdminUser>>();
 
         // Check if user already exists
         var existingUser = dbContext.AdminUsers.FirstOrDefault(u => u.Username == TestUsername);
@@ -60,14 +62,21 @@ public abstract class IntegrationTestBase : IClassFixture<PostgresContainerFixtu
             var user = new AdminUser
             {
                 Username = TestUsername,
-                PasswordHash = BCrypt.Net.BCrypt.HashPassword(TestPassword),
+                PasswordHash = string.Empty,
                 MustChangePassword = false,
                 CreatedAt = DateTime.UtcNow
             };
 
+            user.PasswordHash = passwordHasher.HashPassword(user, TestPassword);
+
             dbContext.AdminUsers.Add(user);
             await dbContext.SaveChangesAsync();
+            return;
         }
+
+        existingUser.MustChangePassword = false;
+        existingUser.PasswordHash = passwordHasher.HashPassword(existingUser, TestPassword);
+        await dbContext.SaveChangesAsync();
     }
 
     /// <summary>

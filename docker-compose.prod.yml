@@ -89,6 +89,40 @@ services:
       - "traefik.http.services.api-sse.loadbalancer.server.port=8080"
       - "traefik.http.services.api-sse.loadbalancer.responseforwarding.flushinterval=1ms"
 
+      # Jobs SSE route with special middleware (no buffering)
+      - "traefik.http.routers.api-jobs-sse.rule=Host(`monmarq.es`) && PathPrefix(`/api/jobs/sse`)"
+      - "traefik.http.routers.api-jobs-sse.entrypoints=websecure"
+      - "traefik.http.routers.api-jobs-sse.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.api-jobs-sse.middlewares=sse-chain@file"
+      - "traefik.http.routers.api-jobs-sse.priority=100"
+      - "traefik.http.services.api-jobs-sse.loadbalancer.server.port=8080"
+      - "traefik.http.services.api-jobs-sse.loadbalancer.responseforwarding.flushinterval=1ms"
+
+  # Crawl job worker service
+  worker:
+    image: ghcr.io/loferreiranuno/momarq/worker:latest
+    container_name: visualsearch-worker
+    environment:
+      - DOTNET_ENVIRONMENT=Production
+      - ConnectionStrings__DefaultConnection=Host=postgres;Database=visualsearch;Username=vsuser;Password=${DB_PASSWORD}
+      - Worker__InstanceId=worker-prod-1
+      - Worker__PollIntervalSeconds=15
+      - Worker__LeaseMinutes=5
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+      # Scale workers if needed
+      replicas: 1
+    restart: unless-stopped
+    networks:
+      - internal
+
   # Nginx (frontend static files + uploads)
   nginx:
     image: ghcr.io/loferreiranuno/momarq/frontend:latest

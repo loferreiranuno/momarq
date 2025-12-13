@@ -1,0 +1,18 @@
+# Prevent host build artifacts (especially Windows) from breaking Linux container builds
+**/bin/
+**/obj/
+
+# IDE/editor
+**/.vs/
+**/.vscode/
+**/*.user
+**/*.suo
+
+# Test artifacts
+**/TestResults/
+
+# Local dev secrets/config
+**/appsettings.Development.json
+
+# Large model artifacts (downloaded during image build)
+**/Models/*.onnx

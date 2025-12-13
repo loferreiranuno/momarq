@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using VisualSearch.Api.Contracts.DTOs;
 using VisualSearch.Api.Tests.Fixtures;
 
 namespace VisualSearch.Api.Tests.Integration;
@@ -24,7 +25,7 @@ public sealed class AdminCrudTests : IntegrationTestBase
         var provider = new
         {
             Name = "Test Provider",
-            BaseUrl = "https://test-provider.com",
+            WebsiteUrl = "https://test-provider.com",
             Description = "Test provider description"
         };
 
@@ -34,10 +35,10 @@ public sealed class AdminCrudTests : IntegrationTestBase
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.Created);
 
-        var result = await response.Content.ReadFromJsonAsync<ProviderResponse>();
+        var result = await response.Content.ReadFromJsonAsync<AdminProviderDto>();
         result.Should().NotBeNull();
         result!.Name.Should().Be("Test Provider");
-        result.BaseUrl.Should().Be("https://test-provider.com");
+        result.WebsiteUrl.Should().Be("https://test-provider.com");
     }
 
     [Fact]
@@ -47,7 +48,7 @@ public sealed class AdminCrudTests : IntegrationTestBase
         await AuthenticatedPostAsync("/api/admin/providers", new
         {
             Name = "List Test Provider",
-            BaseUrl = "https://list-test.com"
+            WebsiteUrl = "https://list-test.com"
         });
 
         // Act
@@ -56,7 +57,7 @@ public sealed class AdminCrudTests : IntegrationTestBase
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        var providers = await response.Content.ReadFromJsonAsync<List<ProviderResponse>>();
+        var providers = await response.Content.ReadFromJsonAsync<List<AdminProviderDto>>();
         providers.Should().NotBeNull();
         providers.Should().Contain(p => p.Name == "List Test Provider");
     }
@@ -68,9 +69,9 @@ public sealed class AdminCrudTests : IntegrationTestBase
         var createResponse = await AuthenticatedPostAsync("/api/admin/providers", new
         {
             Name = "Get By Id Provider",
-            BaseUrl = "https://getbyid.com"
+            WebsiteUrl = "https://getbyid.com"
         });
-        var created = await createResponse.Content.ReadFromJsonAsync<ProviderResponse>();
+        var created = await createResponse.Content.ReadFromJsonAsync<AdminProviderDto>();
 
         // Act
         var response = await AuthenticatedGetAsync($"/api/admin/providers/{created!.Id}");
@@ -78,7 +79,7 @@ public sealed class AdminCrudTests : IntegrationTestBase
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        var provider = await response.Content.ReadFromJsonAsync<ProviderResponse>();
+        var provider = await response.Content.ReadFromJsonAsync<AdminProviderDto>();
         provider.Should().NotBeNull();
         provider!.Id.Should().Be(created.Id);
         provider.Name.Should().Be("Get By Id Provider");
@@ -101,14 +102,14 @@ public sealed class AdminCrudTests : IntegrationTestBase
         var createResponse = await AuthenticatedPostAsync("/api/admin/providers", new
         {
             Name = "Update Test Provider",
-            BaseUrl = "https://updatetest.com"
+            WebsiteUrl = "https://updatetest.com"
         });
-        var created = await createResponse.Content.ReadFromJsonAsync<ProviderResponse>();
+        var created = await createResponse.Content.ReadFromJsonAsync<AdminProviderDto>();
 
         var updateRequest = new
         {
             Name = "Updated Provider Name",
-            BaseUrl = "https://updated.com",
+            WebsiteUrl = "https://updated.com",
             Description = "Updated description"
         };
 
@@ -118,10 +119,10 @@ public sealed class AdminCrudTests : IntegrationTestBase
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        var updated = await response.Content.ReadFromJsonAsync<ProviderResponse>();
+        var updated = await response.Content.ReadFromJsonAsync<AdminProviderDto>();
         updated.Should().NotBeNull();
         updated!.Name.Should().Be("Updated Provider Name");
-        updated.BaseUrl.Should().Be("https://updated.com");
+        updated.WebsiteUrl.Should().Be("https://updated.com");
     }
 
     [Fact]
@@ -131,9 +132,9 @@ public sealed class AdminCrudTests : IntegrationTestBase
         var createResponse = await AuthenticatedPostAsync("/api/admin/providers", new
         {
             Name = "Delete Test Provider",
-            BaseUrl = "https://deletetest.com"
+            WebsiteUrl = "https://deletetest.com"
         });
-        var created = await createResponse.Content.ReadFromJsonAsync<ProviderResponse>();
+        var created = await createResponse.Content.ReadFromJsonAsync<AdminProviderDto>();
 
         // Act
         var response = await AuthenticatedDeleteAsync($"/api/admin/providers/{created!.Id}");
@@ -158,6 +159,7 @@ public sealed class AdminCrudTests : IntegrationTestBase
         {
             Name = "Test Category",
             Description = "Test category description",
+            CocoClassId = 50001,
             DetectionEnabled = true
         };
 
@@ -167,7 +169,7 @@ public sealed class AdminCrudTests : IntegrationTestBase
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.Created);
 
-        var result = await response.Content.ReadFromJsonAsync<CategoryResponse>();
+        var result = await response.Content.ReadFromJsonAsync<AdminCategoryDto>();
         result.Should().NotBeNull();
         result!.Name.Should().Be("Test Category");
     }
@@ -178,7 +180,8 @@ public sealed class AdminCrudTests : IntegrationTestBase
         // Arrange - Create a category first
         await AuthenticatedPostAsync("/api/admin/categories", new
         {
-            Name = "List Test Category"
+            Name = "List Test Category",
+            CocoClassId = 50002
         });
 
         // Act
@@ -187,7 +190,7 @@ public sealed class AdminCrudTests : IntegrationTestBase
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        var categories = await response.Content.ReadFromJsonAsync<List<CategoryResponse>>();
+        var categories = await response.Content.ReadFromJsonAsync<List<AdminCategoryDto>>();
         categories.Should().NotBeNull();
         categories.Should().Contain(c => c.Name == "List Test Category");
     }
@@ -203,15 +206,16 @@ public sealed class AdminCrudTests : IntegrationTestBase
         var providerResponse = await AuthenticatedPostAsync("/api/admin/providers", new
         {
             Name = "Product Test Provider",
-            BaseUrl = "https://producttest.com"
+            WebsiteUrl = "https://producttest.com"
         });
-        var provider = await providerResponse.Content.ReadFromJsonAsync<ProviderResponse>();
+        var provider = await providerResponse.Content.ReadFromJsonAsync<AdminProviderDto>();
 
         var categoryResponse = await AuthenticatedPostAsync("/api/admin/categories", new
         {
-            Name = "Product Test Category"
+            Name = "Product Test Category",
+            CocoClassId = 50003
         });
-        var category = await categoryResponse.Content.ReadFromJsonAsync<CategoryResponse>();
+        var category = await categoryResponse.Content.ReadFromJsonAsync<AdminCategoryDto>();
 
         var product = new
         {
@@ -229,7 +233,13 @@ public sealed class AdminCrudTests : IntegrationTestBase
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.Created);
 
-        var result = await response.Content.ReadFromJsonAsync<ProductResponse>();
+        var created = await response.Content.ReadFromJsonAsync<IdResponse>();
+        created.Should().NotBeNull();
+
+        var getResponse = await AuthenticatedGetAsync($"/api/admin/products/{created!.Id}");
+        getResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var result = await getResponse.Content.ReadFromJsonAsync<AdminProductDto>();
         result.Should().NotBeNull();
         result!.Name.Should().Be("Test Product");
         result.Price.Should().Be(99.99m);
@@ -242,15 +252,16 @@ public sealed class AdminCrudTests : IntegrationTestBase
         var providerResponse = await AuthenticatedPostAsync("/api/admin/providers", new
         {
             Name = "Pagination Test Provider",
-            BaseUrl = "https://paginationtest.com"
+            WebsiteUrl = "https://paginationtest.com"
         });
-        var provider = await providerResponse.Content.ReadFromJsonAsync<ProviderResponse>();
+        var provider = await providerResponse.Content.ReadFromJsonAsync<AdminProviderDto>();
 
         var categoryResponse = await AuthenticatedPostAsync("/api/admin/categories", new
         {
-            Name = "Pagination Test Category"
+            Name = "Pagination Test Category",
+            CocoClassId = 50004
         });
-        var category = await categoryResponse.Content.ReadFromJsonAsync<CategoryResponse>();
+        var category = await categoryResponse.Content.ReadFromJsonAsync<AdminCategoryDto>();
 
         // Create multiple products
         for (var i = 1; i <= 5; i++)
@@ -270,7 +281,7 @@ public sealed class AdminCrudTests : IntegrationTestBase
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        var result = await response.Content.ReadFromJsonAsync<PagedProductsResponse>();
+        var result = await response.Content.ReadFromJsonAsync<AdminPagedResult<AdminProductDto>>();
         result.Should().NotBeNull();
         result!.Items.Should().HaveCountLessOrEqualTo(3);
     }
@@ -282,15 +293,16 @@ public sealed class AdminCrudTests : IntegrationTestBase
         var providerResponse = await AuthenticatedPostAsync("/api/admin/providers", new
         {
             Name = "GetById Test Provider",
-            BaseUrl = "https://getbyidtest.com"
+            WebsiteUrl = "https://getbyidtest.com"
         });
-        var provider = await providerResponse.Content.ReadFromJsonAsync<ProviderResponse>();
+        var provider = await providerResponse.Content.ReadFromJsonAsync<AdminProviderDto>();
 
         var categoryResponse = await AuthenticatedPostAsync("/api/admin/categories", new
         {
-            Name = "GetById Test Category"
+            Name = "GetById Test Category",
+            CocoClassId = 50005
         });
-        var category = await categoryResponse.Content.ReadFromJsonAsync<CategoryResponse>();
+        var category = await categoryResponse.Content.ReadFromJsonAsync<AdminCategoryDto>();
 
         var createResponse = await AuthenticatedPostAsync("/api/admin/products", new
         {
@@ -299,7 +311,8 @@ public sealed class AdminCrudTests : IntegrationTestBase
             CategoryId = category!.Id,
             Price = 50.0m
         });
-        var created = await createResponse.Content.ReadFromJsonAsync<ProductResponse>();
+        var created = await createResponse.Content.ReadFromJsonAsync<IdResponse>();
+        created.Should().NotBeNull();
 
         // Act
         var response = await AuthenticatedGetAsync($"/api/admin/products/{created!.Id}");
@@ -307,7 +320,7 @@ public sealed class AdminCrudTests : IntegrationTestBase
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        var product = await response.Content.ReadFromJsonAsync<ProductResponse>();
+        var product = await response.Content.ReadFromJsonAsync<AdminProductDto>();
         product.Should().NotBeNull();
         product!.Name.Should().Be("Get By Id Product");
     }
@@ -319,15 +332,16 @@ public sealed class AdminCrudTests : IntegrationTestBase
         var providerResponse = await AuthenticatedPostAsync("/api/admin/providers", new
         {
             Name = "Update Product Provider",
-            BaseUrl = "https://updateproduct.com"
+            WebsiteUrl = "https://updateproduct.com"
         });
-        var provider = await providerResponse.Content.ReadFromJsonAsync<ProviderResponse>();
+        var provider = await providerResponse.Content.ReadFromJsonAsync<AdminProviderDto>();
 
         var categoryResponse = await AuthenticatedPostAsync("/api/admin/categories", new
         {
-            Name = "Update Product Category"
+            Name = "Update Product Category",
+            CocoClassId = 50006
         });
-        var category = await categoryResponse.Content.ReadFromJsonAsync<CategoryResponse>();
+        var category = await categoryResponse.Content.ReadFromJsonAsync<AdminCategoryDto>();
 
         var createResponse = await AuthenticatedPostAsync("/api/admin/products", new
         {
@@ -336,7 +350,8 @@ public sealed class AdminCrudTests : IntegrationTestBase
             CategoryId = category!.Id,
             Price = 100.0m
         });
-        var created = await createResponse.Content.ReadFromJsonAsync<ProductResponse>();
+        var created = await createResponse.Content.ReadFromJsonAsync<IdResponse>();
+        created.Should().NotBeNull();
 
         var updateRequest = new
         {
@@ -353,10 +368,16 @@ public sealed class AdminCrudTests : IntegrationTestBase
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        var updated = await response.Content.ReadFromJsonAsync<ProductResponse>();
+        var updated = await response.Content.ReadFromJsonAsync<IdResponse>();
         updated.Should().NotBeNull();
-        updated!.Name.Should().Be("Updated Product Name");
-        updated.Price.Should().Be(150.0m);
+
+        var getResponse = await AuthenticatedGetAsync($"/api/admin/products/{updated!.Id}");
+        getResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var product = await getResponse.Content.ReadFromJsonAsync<AdminProductDto>();
+        product.Should().NotBeNull();
+        product!.Name.Should().Be("Updated Product Name");
+        product.Price.Should().Be(150.0m);
     }
 
     [Fact]
@@ -366,15 +387,16 @@ public sealed class AdminCrudTests : IntegrationTestBase
         var providerResponse = await AuthenticatedPostAsync("/api/admin/providers", new
         {
             Name = "Delete Product Provider",
-            BaseUrl = "https://deleteproduct.com"
+            WebsiteUrl = "https://deleteproduct.com"
         });
-        var provider = await providerResponse.Content.ReadFromJsonAsync<ProviderResponse>();
+        var provider = await providerResponse.Content.ReadFromJsonAsync<AdminProviderDto>();
 
         var categoryResponse = await AuthenticatedPostAsync("/api/admin/categories", new
         {
-            Name = "Delete Product Category"
+            Name = "Delete Product Category",
+            CocoClassId = 50007
         });
-        var category = await categoryResponse.Content.ReadFromJsonAsync<CategoryResponse>();
+        var category = await categoryResponse.Content.ReadFromJsonAsync<AdminCategoryDto>();
 
         var createResponse = await AuthenticatedPostAsync("/api/admin/products", new
         {
@@ -383,7 +405,8 @@ public sealed class AdminCrudTests : IntegrationTestBase
             CategoryId = category!.Id,
             Price = 25.0m
         });
-        var created = await createResponse.Content.ReadFromJsonAsync<ProductResponse>();
+        var created = await createResponse.Content.ReadFromJsonAsync<IdResponse>();
+        created.Should().NotBeNull();
 
         // Act
         var response = await AuthenticatedDeleteAsync($"/api/admin/products/{created!.Id}");
@@ -409,7 +432,7 @@ public sealed class AdminCrudTests : IntegrationTestBase
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        var stats = await response.Content.ReadFromJsonAsync<StatsResponse>();
+        var stats = await response.Content.ReadFromJsonAsync<AdminDashboardStatsDto>();
         stats.Should().NotBeNull();
         stats!.Products.Should().BeGreaterOrEqualTo(0);
         stats.Providers.Should().BeGreaterOrEqualTo(0);
@@ -424,7 +447,7 @@ public sealed class AdminCrudTests : IntegrationTestBase
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        var status = await response.Content.ReadFromJsonAsync<SystemStatusResponse>();
+        var status = await response.Content.ReadFromJsonAsync<AdminSystemStatusDto>();
         status.Should().NotBeNull();
     }
 
@@ -446,12 +469,9 @@ public sealed class AdminCrudTests : IntegrationTestBase
 
     #region Response DTOs
 
-    private record ProviderResponse(int Id, string Name, string BaseUrl, string? Description);
-    private record CategoryResponse(int Id, string Name, string? Description, bool DetectionEnabled);
-    private record ProductResponse(int Id, string Name, int ProviderId, int? CategoryId, decimal Price, string? Currency);
-    private record PagedProductsResponse(List<ProductResponse> Items, int TotalCount, int Page, int PageSize);
-    private record StatsResponse(int Products, int Providers, int Images, int Vectorized);
-    private record SystemStatusResponse(bool ClipModelLoaded, bool YoloModelLoaded);
+    // Response DTOs are imported from VisualSearch.Api.Contracts.DTOs to stay aligned with API responses.
+
+    private sealed record IdResponse(int Id);
 
     #endregion
 }

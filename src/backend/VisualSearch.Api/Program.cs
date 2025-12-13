@@ -163,6 +163,9 @@ app.MapCategoriesEndpoints();
 // Map admin endpoints (JSON REST)
 app.MapAdminEndpoints();
 
+// Map jobs endpoints for crawl job management
+app.MapJobsEndpoints();
+
 // ========== Run Application ==========
 
 app.Run();

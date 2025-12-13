@@ -137,6 +137,12 @@ onMounted(async () => {
             <p class="action-card__description">Manage products and images</p>
           </router-link>
 
+          <router-link to="/admin/jobs" class="action-card card card--hoverable">
+            <span class="action-card__icon">🕷️</span>
+            <h3 class="action-card__title">Crawl Jobs</h3>
+            <p class="action-card__description">Manage crawl jobs</p>
+          </router-link>
+
           <router-link to="/admin/settings" class="action-card card card--hoverable">
             <span class="action-card__icon">⚙️</span>
             <h3 class="action-card__title">Settings</h3>

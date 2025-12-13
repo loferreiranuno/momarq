@@ -73,7 +73,7 @@ public sealed class AuthFlowTests : IntegrationTestBase
         var response = await Client!.PostAsJsonAsync("/api/auth/login", loginRequest);
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }
 
     [Fact]
@@ -109,6 +109,7 @@ public sealed class AuthFlowTests : IntegrationTestBase
         // Arrange
         var request = new
         {
+            Username = "testadmin",
             CurrentPassword = "TestPassword123!",
             NewPassword = "NewPassword456!"
         };
@@ -130,6 +131,7 @@ public sealed class AuthFlowTests : IntegrationTestBase
         // Change back to original password for other tests
         var revertRequest = new
         {
+            Username = "testadmin",
             CurrentPassword = "NewPassword456!",
             NewPassword = "TestPassword123!"
         };
@@ -154,6 +156,7 @@ public sealed class AuthFlowTests : IntegrationTestBase
         // Arrange
         var request = new
         {
+            Username = "testadmin",
             CurrentPassword = "WrongPassword!",
             NewPassword = "NewPassword456!"
         };
@@ -171,6 +174,7 @@ public sealed class AuthFlowTests : IntegrationTestBase
         // Arrange
         var request = new
         {
+            Username = "testadmin",
             CurrentPassword = "TestPassword123!",
             NewPassword = "Short1" // Less than 8 characters
         };

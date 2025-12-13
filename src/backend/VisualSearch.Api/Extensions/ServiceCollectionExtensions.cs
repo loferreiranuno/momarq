@@ -101,6 +101,9 @@ public static class ServiceCollectionExtensions
         // Settings service (singleton - for SSE connections and caching)
         services.AddSingleton<SettingsService>();
 
+        // SSE ticket service (singleton - short-lived one-time tokens for EventSource auth)
+        services.AddSingleton<SseTicketService>();
+
         return services;
     }
 

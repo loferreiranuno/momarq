@@ -63,6 +63,12 @@ const routes: RouteRecordRaw[] = [
     meta: { title: 'Products', requiresAuth: true },
   },
   {
+    path: '/admin/jobs',
+    name: 'admin-jobs',
+    component: () => import('@/views/admin/AdminJobsView.vue'),
+    meta: { title: 'Crawl Jobs', requiresAuth: true },
+  },
+  {
     path: '/admin/products/new',
     name: 'admin-product-new',
     component: () => import('@/views/admin/AdminProductFormView.vue'),

@@ -1,10 +1,18 @@
 # Fixed: correct model URLs (public, no 401) + faster/smaller alternatives
 FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
 WORKDIR /src
-COPY VisualSearch.Api.csproj .
-RUN dotnet restore
+
+# Copy project files first for better layer caching
+COPY VisualSearch.Api/VisualSearch.Api.csproj VisualSearch.Api/
+COPY VisualSearch.Contracts/VisualSearch.Contracts.csproj VisualSearch.Contracts/
+
+RUN dotnet restore VisualSearch.Api/VisualSearch.Api.csproj
+
+# Copy source
 COPY . .
-RUN dotnet publish -c Release -o /app/publish --no-restore
+
+WORKDIR /src/VisualSearch.Api
+RUN dotnet publish VisualSearch.Api.csproj -c Release -o /app/publish --no-restore
 
 # Models stage
 FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS models
@@ -33,8 +41,8 @@ import shutil, os
 shutil.move("yolov8s-worldv2.onnx", "yolo-world-s.onnx")
 PY
 
-# Runtime
-FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS runtime
+# Runtime base
+FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS runtime-base
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 wget && rm -rf /var/lib/apt/lists/*
@@ -42,7 +50,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 wget &
 COPY --from=build /app/publish .
 
 RUN mkdir -p /app/Models
-COPY --from=models /models/*.onnx /app/Models/
 
 ENV ASPNETCORE_URLS=http://+:8080
 EXPOSE 8080
@@ -51,3 +58,10 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=150s --retries=3 \
     CMD wget --no-verbose --tries=1 http://localhost:8080/health -q -O - || exit 1
 
 ENTRYPOINT ["dotnet", "VisualSearch.Api.dll"]
+
+# Optional target that includes models downloaded in the `models` stage.
+FROM runtime-base AS runtime-with-models
+COPY --from=models /models/*.onnx /app/Models/
+
+# Default target: runtime without bundled models (offline / proxy-friendly).
+FROM runtime-base AS runtime
