@@ -1,6 +1,55 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import { api } from '@/api/client'
+
+// Available crawler types
+const CRAWLER_TYPES = [
+  { value: 'generic', label: 'Generic (HTML/CSS)' },
+  { value: 'json-ld', label: 'JSON-LD Structured Data' },
+  { value: 'sitemap', label: 'Sitemap' },
+  { value: 'api', label: 'API' },
+  { value: 'zarahome', label: 'Zara Home (Playwright)' },
+] as const
+
+// Default crawler configs per type
+const CRAWLER_CONFIG_TEMPLATES: Record<string, object> = {
+  generic: {
+    requestDelayMs: 1000,
+    maxConcurrency: 2,
+    respectRobotsTxt: true,
+    userAgent: 'VisualSearchBot/1.0',
+    productContainerSelector: '.product-card',
+    productNameSelector: '.product-title',
+    productPriceSelector: '.product-price',
+    productImageSelector: '.product-image img',
+  },
+  'json-ld': {
+    requestDelayMs: 1000,
+    maxConcurrency: 2,
+    respectRobotsTxt: true,
+  },
+  sitemap: {
+    requestDelayMs: 1000,
+    maxConcurrency: 2,
+    respectRobotsTxt: true,
+  },
+  api: {
+    requestDelayMs: 500,
+    maxConcurrency: 5,
+    customSettings: {
+      apiEndpoint: '',
+      apiKey: '',
+    },
+  },
+  zarahome: {
+    requestDelayMs: 2000,
+    maxConcurrency: 1,
+    customSettings: {
+      SitemapUrl: 'https://www.zarahome.com/8/info/sitemaps/sitemap-products-zh-es-0.xml.gz',
+      MaxPages: '100',
+    },
+  },
+}
 
 interface ProviderDto {
   id: number
@@ -8,17 +57,22 @@ interface ProviderDto {
   logoUrl?: string
   websiteUrl?: string
   productCount: number
+  crawlerType?: string
+  crawlerConfigJson?: string
 }
 
 interface ProviderForm {
   name: string
   logoUrl: string
   websiteUrl: string
+  crawlerType: string
+  crawlerConfigJson: string
 }
 
 const providers = ref<ProviderDto[]>([])
 const isLoading = ref(true)
 const error = ref<string | null>(null)
+const jsonError = ref<string | null>(null)
 
 // Modal state
 const showModal = ref(false)
@@ -29,6 +83,8 @@ const form = ref<ProviderForm>({
   name: '',
   logoUrl: '',
   websiteUrl: '',
+  crawlerType: 'generic',
+  crawlerConfigJson: '',
 })
 
 // Delete confirmation
@@ -37,6 +93,20 @@ const deletingProvider = ref<ProviderDto | null>(null)
 const isDeleting = ref(false)
 
 const modalTitle = computed(() => (isEditing.value ? 'Edit Provider' : 'Add Provider'))
+
+// Validate JSON when it changes
+watch(() => form.value.crawlerConfigJson, (value) => {
+  if (!value || value.trim() === '') {
+    jsonError.value = null
+    return
+  }
+  try {
+    JSON.parse(value)
+    jsonError.value = null
+  } catch (e) {
+    jsonError.value = e instanceof Error ? e.message : 'Invalid JSON'
+  }
+})
 
 onMounted(async () => {
   await loadProviders()
@@ -58,7 +128,8 @@ async function loadProviders() {
 function openAddModal() {
   isEditing.value = false
   editingId.value = null
-  form.value = { name: '', logoUrl: '', websiteUrl: '' }
+  form.value = { name: '', logoUrl: '', websiteUrl: '', crawlerType: 'generic', crawlerConfigJson: '' }
+  jsonError.value = null
   showModal.value = true
 }
 
@@ -69,17 +140,33 @@ function openEditModal(provider: ProviderDto) {
     name: provider.name,
     logoUrl: provider.logoUrl ?? '',
     websiteUrl: provider.websiteUrl ?? '',
+    crawlerType: provider.crawlerType ?? 'generic',
+    crawlerConfigJson: provider.crawlerConfigJson ?? '',
   }
+  jsonError.value = null
   showModal.value = true
 }
 
 function closeModal() {
   showModal.value = false
-  form.value = { name: '', logoUrl: '', websiteUrl: '' }
+  form.value = { name: '', logoUrl: '', websiteUrl: '', crawlerType: 'generic', crawlerConfigJson: '' }
+  jsonError.value = null
+}
+
+function loadConfigTemplate() {
+  const template = CRAWLER_CONFIG_TEMPLATES[form.value.crawlerType]
+  if (template) {
+    form.value.crawlerConfigJson = JSON.stringify(template, null, 2)
+  }
 }
 
 async function saveProvider() {
   if (!form.value.name.trim()) {
+    return
+  }
+
+  // Don't save if there's a JSON error
+  if (form.value.crawlerConfigJson && jsonError.value) {
     return
   }
 
@@ -89,6 +176,8 @@ async function saveProvider() {
       name: form.value.name.trim(),
       logoUrl: form.value.logoUrl.trim() || undefined,
       websiteUrl: form.value.websiteUrl.trim() || undefined,
+      crawlerType: form.value.crawlerType,
+      crawlerConfigJson: form.value.crawlerConfigJson.trim() || undefined,
     }
 
     if (isEditing.value && editingId.value) {
@@ -174,6 +263,7 @@ async function deleteProvider() {
               <th>Logo</th>
               <th>Name</th>
               <th>Website</th>
+              <th>Crawler</th>
               <th>Products</th>
               <th>Actions</th>
             </tr>
@@ -201,6 +291,9 @@ async function deleteProvider() {
                   {{ provider.websiteUrl }}
                 </a>
                 <span v-else class="text-muted">—</span>
+              </td>
+              <td>
+                <span class="admin-providers__crawler-badge">{{ provider.crawlerType ?? 'generic' }}</span>
               </td>
               <td>
                 <span class="admin-providers__badge">{{ provider.productCount }}</span>
@@ -268,6 +361,40 @@ async function deleteProvider() {
                 placeholder="https://example.com"
               />
             </div>
+            <div class="form-group">
+              <label class="label" for="provider-crawler-type">Crawler Type</label>
+              <select
+                id="provider-crawler-type"
+                v-model="form.crawlerType"
+                class="input"
+              >
+                <option v-for="type in CRAWLER_TYPES" :key="type.value" :value="type.value">
+                  {{ type.label }}
+                </option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="label" for="provider-crawler-config">
+                Crawler Config (JSON)
+                <button
+                  type="button"
+                  class="btn btn--sm btn--ghost admin-providers__template-btn"
+                  @click="loadConfigTemplate"
+                  title="Load template for selected crawler type"
+                >
+                  📋 Load Template
+                </button>
+              </label>
+              <textarea
+                id="provider-crawler-config"
+                v-model="form.crawlerConfigJson"
+                class="input admin-providers__json-input"
+                :class="{ 'input--error': jsonError }"
+                placeholder='{"baseUrl": "https://example.com", ...}'
+                rows="8"
+              ></textarea>
+              <p v-if="jsonError" class="form-error">{{ jsonError }}</p>
+            </div>
             <div class="modal__footer">
               <button type="button" class="btn btn--secondary" @click="closeModal">
                 Cancel
@@ -275,7 +402,7 @@ async function deleteProvider() {
               <button
                 type="submit"
                 class="btn btn--primary"
-                :disabled="isSaving || !form.name.trim()"
+                :disabled="isSaving || !form.name.trim() || Boolean(form.crawlerConfigJson && jsonError)"
               >
                 <span v-if="isSaving" class="spinner spinner--sm"></span>
                 {{ isSaving ? 'Saving...' : 'Save' }}
@@ -433,6 +560,19 @@ async function deleteProvider() {
     font-weight: 500;
   }
 
+  &__crawler-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2px 8px;
+    background: var(--color-primary-light, #e0f2fe);
+    color: var(--color-primary-dark, #0369a1);
+    border-radius: var(--radius-sm, 4px);
+    font-size: var(--text-xs);
+    font-weight: 500;
+    text-transform: lowercase;
+  }
+
   &__actions {
     display: flex;
     gap: var(--space-1);
@@ -512,5 +652,33 @@ async function deleteProvider() {
   width: 14px;
   height: 14px;
   margin-right: var(--space-2);
+}
+
+.admin-providers__json-input {
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: var(--text-sm);
+  resize: vertical;
+  min-height: 120px;
+}
+
+.admin-providers__template-btn {
+  margin-left: var(--space-2);
+  font-size: var(--text-xs);
+}
+
+.form-error {
+  color: var(--color-error, #dc2626);
+  font-size: var(--text-sm);
+  margin-top: var(--space-1);
+  margin-bottom: 0;
+}
+
+.input--error {
+  border-color: var(--color-error, #dc2626);
+
+  &:focus {
+    border-color: var(--color-error, #dc2626);
+    box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.2);
+  }
 }
 </style>

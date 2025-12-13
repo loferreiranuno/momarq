@@ -21,7 +21,7 @@ public record AdminDashboardStatsDto(
 // ========== Provider DTOs ==========
 
 /// <summary>
-/// Admin provider DTO with product count.
+/// Admin provider DTO with product count and crawler configuration.
 /// </summary>
 public record AdminProviderDto
 {
@@ -30,6 +30,8 @@ public record AdminProviderDto
     public string? LogoUrl { get; init; }
     public string? WebsiteUrl { get; init; }
     public int ProductCount { get; init; }
+    public string? CrawlerType { get; init; }
+    public string? CrawlerConfigJson { get; init; }
 }
 
 // ========== Category DTOs ==========

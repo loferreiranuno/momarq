@@ -1,7 +1,9 @@
+using System.Text.Json;
 using VisualSearch.Api.Contracts.DTOs;
 using VisualSearch.Api.Contracts.Requests;
 using VisualSearch.Api.Data.Entities;
 using VisualSearch.Api.Domain.Interfaces;
+using VisualSearch.Contracts.Crawling;
 
 namespace VisualSearch.Api.Application.Services;
 
@@ -55,7 +57,9 @@ public sealed class ProviderService
                 Name = provider.Name,
                 LogoUrl = provider.LogoUrl,
                 WebsiteUrl = provider.WebsiteUrl,
-                ProductCount = productCount
+                ProductCount = productCount,
+                CrawlerType = provider.CrawlerType,
+                CrawlerConfigJson = provider.CrawlerConfigJson
             });
         }
 
@@ -92,7 +96,9 @@ public sealed class ProviderService
             Name = provider.Name,
             LogoUrl = provider.LogoUrl,
             WebsiteUrl = provider.WebsiteUrl,
-            ProductCount = productCount
+            ProductCount = productCount,
+            CrawlerType = provider.CrawlerType,
+            CrawlerConfigJson = provider.CrawlerConfigJson
         };
     }
 
@@ -105,11 +111,19 @@ public sealed class ProviderService
             throw new InvalidOperationException($"Provider with name '{request.Name}' already exists.");
         }
 
+        // Validate crawler type
+        ValidateCrawlerType(request.CrawlerType);
+        
+        // Validate crawler config JSON
+        ValidateCrawlerConfigJson(request.CrawlerConfigJson);
+
         var provider = new Provider
         {
             Name = request.Name,
             LogoUrl = request.LogoUrl,
             WebsiteUrl = request.WebsiteUrl,
+            CrawlerType = request.CrawlerType ?? CrawlerTypes.Generic,
+            CrawlerConfigJson = request.CrawlerConfigJson,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -127,11 +141,19 @@ public sealed class ProviderService
             throw new ArgumentException("Provider name is required.", nameof(request));
         }
 
+        // Validate crawler type
+        ValidateCrawlerType(request.CrawlerType);
+        
+        // Validate crawler config JSON
+        ValidateCrawlerConfigJson(request.CrawlerConfigJson);
+
         var provider = new Provider
         {
             Name = request.Name,
             LogoUrl = request.LogoUrl,
             WebsiteUrl = request.WebsiteUrl,
+            CrawlerType = request.CrawlerType ?? CrawlerTypes.Generic,
+            CrawlerConfigJson = request.CrawlerConfigJson,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -142,7 +164,9 @@ public sealed class ProviderService
             Name = provider.Name,
             LogoUrl = provider.LogoUrl,
             WebsiteUrl = provider.WebsiteUrl,
-            ProductCount = 0
+            ProductCount = 0,
+            CrawlerType = provider.CrawlerType,
+            CrawlerConfigJson = provider.CrawlerConfigJson
         };
     }
 
@@ -174,13 +198,26 @@ public sealed class ProviderService
     /// <summary>
     /// Updates a provider with partial data and returns admin DTO.
     /// </summary>
-    public async Task<AdminProviderDto?> UpdateAdminProviderAsync(int id, string? name, string? logoUrl, string? websiteUrl, CancellationToken cancellationToken = default)
+    public async Task<AdminProviderDto?> UpdateAdminProviderAsync(
+        int id, 
+        string? name, 
+        string? logoUrl, 
+        string? websiteUrl, 
+        string? crawlerType,
+        string? crawlerConfigJson,
+        CancellationToken cancellationToken = default)
     {
         var provider = await _providerRepository.GetByIdAsync(id, cancellationToken);
         if (provider is null)
         {
             return null;
         }
+
+        // Validate crawler type
+        ValidateCrawlerType(crawlerType);
+        
+        // Validate crawler config JSON
+        ValidateCrawlerConfigJson(crawlerConfigJson);
 
         if (!string.IsNullOrWhiteSpace(name))
         {
@@ -197,6 +234,16 @@ public sealed class ProviderService
             provider.WebsiteUrl = websiteUrl;
         }
 
+        if (crawlerType is not null)
+        {
+            provider.CrawlerType = crawlerType;
+        }
+
+        if (crawlerConfigJson is not null)
+        {
+            provider.CrawlerConfigJson = string.IsNullOrWhiteSpace(crawlerConfigJson) ? null : crawlerConfigJson;
+        }
+
         await _providerRepository.UpdateAsync(provider, cancellationToken);
 
         var productCount = await _productRepository.GetCountByProviderAsync(id, cancellationToken);
@@ -206,7 +253,9 @@ public sealed class ProviderService
             Name = provider.Name,
             LogoUrl = provider.LogoUrl,
             WebsiteUrl = provider.WebsiteUrl,
-            ProductCount = productCount
+            ProductCount = productCount,
+            CrawlerType = provider.CrawlerType,
+            CrawlerConfigJson = provider.CrawlerConfigJson
         };
     }
 
@@ -279,5 +328,42 @@ public sealed class ProviderService
             null, // UpdatedAt field not in current entity
             productCount
         );
+    }
+
+    /// <summary>
+    /// Validates that the crawler type is a known type.
+    /// </summary>
+    private static void ValidateCrawlerType(string? crawlerType)
+    {
+        if (!AllowedCrawlerTypes.IsValid(crawlerType))
+        {
+            throw new ArgumentException(
+                $"Invalid crawler type '{crawlerType}'. Allowed values: {string.Join(", ", AllowedCrawlerTypes.Values)}",
+                nameof(crawlerType));
+        }
+    }
+
+    /// <summary>
+    /// Validates that the crawler config JSON is valid JSON and can be deserialized to CrawlerConfig.
+    /// </summary>
+    private static void ValidateCrawlerConfigJson(string? crawlerConfigJson)
+    {
+        if (string.IsNullOrWhiteSpace(crawlerConfigJson))
+        {
+            return; // Empty is allowed
+        }
+
+        try
+        {
+            var config = JsonSerializer.Deserialize<CrawlerConfig>(crawlerConfigJson);
+            if (config is null)
+            {
+                throw new ArgumentException("Crawler config JSON cannot be null.", nameof(crawlerConfigJson));
+            }
+        }
+        catch (JsonException ex)
+        {
+            throw new ArgumentException($"Invalid crawler config JSON: {ex.Message}", nameof(crawlerConfigJson));
+        }
     }
 }

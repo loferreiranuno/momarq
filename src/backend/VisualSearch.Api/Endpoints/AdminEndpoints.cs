@@ -203,6 +203,10 @@ public static class AdminEndpoints
         {
             return Results.BadRequest(new { Error = ex.Message });
         }
+        catch (ArgumentException ex)
+        {
+            return Results.BadRequest(new { Error = ex.Message });
+        }
     }
 
     private static async Task<IResult> UpdateProviderAsync(
@@ -214,11 +218,21 @@ public static class AdminEndpoints
         try
         {
             var provider = await providerService.UpdateAdminProviderAsync(
-                id, request.Name, request.LogoUrl, request.WebsiteUrl, cancellationToken);
+                id, 
+                request.Name, 
+                request.LogoUrl, 
+                request.WebsiteUrl,
+                request.CrawlerType,
+                request.CrawlerConfigJson,
+                cancellationToken);
 
             return provider is not null ? Results.Ok(provider) : Results.NotFound();
         }
         catch (InvalidOperationException ex)
+        {
+            return Results.BadRequest(new { Error = ex.Message });
+        }
+        catch (ArgumentException ex)
         {
             return Results.BadRequest(new { Error = ex.Message });
         }

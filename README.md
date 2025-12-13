@@ -156,6 +156,49 @@ The worker uses atomic lease-based job claiming for distributed safety:
 
 This allows multiple worker instances to run safely without duplicate processing.
 
+### Built-in Crawler Strategies
+
+#### Generic Crawler
+The default strategy for standard HTML websites. Uses CSS selectors for content extraction.
+
+```json
+{
+  "crawlerType": "generic",
+  "userAgent": "VisualSearchBot/1.0",
+  "requestDelayMs": 1000
+}
+```
+
+#### Zara Home Crawler (Playwright)
+Specialized strategy for Zara Home using Playwright browser automation. Required because Zara Home blocks direct HTTP requests and serves JavaScript-rendered content.
+
+**Features:**
+- Sitemap parsing for URL discovery (gzipped XML)
+- Playwright for JavaScript rendering
+- `window.__PRELOADED_STATE__` JSON extraction
+- DOM fallback extraction
+- Rate limiting (2-5s delays) to avoid bot detection
+- Browser instance pooling (~300MB per instance)
+
+**Configuration:**
+```json
+{
+  "crawlerType": "zarahome",
+  "requestDelayMs": 2000,
+  "customSettings": {
+    "SitemapUrl": "https://www.zarahome.com/8/info/sitemaps/sitemap-products-zh-es-0.xml.gz",
+    "MaxPages": "100"
+  }
+}
+```
+
+**Sitemap URL formats by country:**
+- Spain: `sitemap-products-zh-es-0.xml.gz`
+- France: `sitemap-products-zh-fr-0.xml.gz`
+- Germany: `sitemap-products-zh-de-0.xml.gz`
+
+**Docker requirements:** The worker Dockerfile uses the Playwright base image (`mcr.microsoft.com/playwright/dotnet:v1.49.0-noble`) which includes Chromium.
+
 ### Adding Custom Strategies
 
 1. Create a new class implementing `ICrawlerStrategy`:

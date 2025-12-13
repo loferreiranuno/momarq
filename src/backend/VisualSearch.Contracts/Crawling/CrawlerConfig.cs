@@ -98,4 +98,7 @@ public static class CrawlerTypes
 
     /// <summary>API-based crawler for providers with public APIs.</summary>
     public const string Api = "api";
+
+    /// <summary>Zara Home crawler with Playwright for JavaScript rendering.</summary>
+    public const string ZaraHome = "zarahome";
 }

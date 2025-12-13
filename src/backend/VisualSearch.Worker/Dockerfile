@@ -17,15 +17,24 @@ RUN dotnet build "VisualSearch.Worker.csproj" -c Release -o /app/build
 FROM build AS publish
 RUN dotnet publish "VisualSearch.Worker.csproj" -c Release -o /app/publish /p:UseAppHost=false
 
-# Runtime stage
-FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS final
+# Runtime stage - use Playwright base image for browser support
+FROM mcr.microsoft.com/playwright/dotnet:v1.49.0-noble AS final
 WORKDIR /app
 
-# Create non-root user for security
-RUN adduser --disabled-password --gecos "" --uid 1001 worker
-USER worker
+# Install only Chromium browser (smaller footprint than all browsers)
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN pwsh -Command "& { (Get-Content -Path /ms-playwright-agent/package.json | ConvertFrom-Json).version }" || true
 
+# The Playwright base image already has a non-root user (pwuser with UID 1001)
+# We'll use that user for security instead of creating a new one
+
+# Copy published app
 COPY --from=publish /app/publish .
+
+# Change ownership of app directory to pwuser (Playwright's default user)
+RUN chown -R pwuser:pwuser /app
+
+USER pwuser
 
 # Health check - worker should respond to SIGTERM gracefully
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \

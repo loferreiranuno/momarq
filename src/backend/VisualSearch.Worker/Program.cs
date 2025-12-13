@@ -48,13 +48,31 @@ builder.Services.AddHttpClient("Crawler", client =>
     AutomaticDecompression = System.Net.DecompressionMethods.All
 });
 
+// HttpClient for Zara Home (with specific headers for sitemap fetching)
+builder.Services.AddHttpClient("ZaraHome", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(60);
+    client.DefaultRequestHeaders.Add("Accept", "application/xml,text/xml,*/*;q=0.9");
+    client.DefaultRequestHeaders.Add("Accept-Language", "es-ES,es;q=0.9");
+    client.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
+})
+.ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+{
+    AllowAutoRedirect = true,
+    MaxAutomaticRedirections = 5,
+    AutomaticDecompression = System.Net.DecompressionMethods.All
+});
+
+// Playwright browser service (singleton - manages browser pool)
+builder.Services.AddSingleton<PlaywrightBrowserService>();
+
 // Product extractor
 builder.Services.AddSingleton<IProductExtractor, DefaultProductExtractor>();
 
-// Crawler strategies
-builder.Services.AddSingleton<ICrawlerStrategy, GenericCrawlerStrategy>();
-// Add custom strategies here:
-// builder.Services.AddSingleton<ICrawlerStrategy, ZaraHomeCrawlerStrategy>();
+// Crawler strategies (order matters - first matching wins in factory)
+builder.Services.AddSingleton<ICrawlerStrategy, ZaraHomeCrawlerStrategy>(); // Zara Home specific
+builder.Services.AddSingleton<ICrawlerStrategy, GenericCrawlerStrategy>();   // Fallback for others
+// Add more custom strategies here:
 // builder.Services.AddSingleton<ICrawlerStrategy, IkeaCrawlerStrategy>();
 
 // Strategy factory
