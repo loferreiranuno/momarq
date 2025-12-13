@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
-import { LayoutDashboard, Package, ShoppingBag, ListChecks, Settings, LogOut, ArrowLeft } from 'lucide-vue-next'
+import { LayoutDashboard, Package, ShoppingBag, ListChecks, Settings, LogOut, ArrowLeft, ImportIcon } from 'lucide-vue-next'
 
 const route = useRoute()
 const authStore = useAuthStore()
@@ -15,6 +15,7 @@ const navLinks = [
   { name: 'admin-providers', label: 'Providers', icon: ShoppingBag },
   { name: 'admin-jobs', label: 'Crawl Jobs', icon: ListChecks },
   { name: 'admin-settings', label: 'Settings', icon: Settings },
+  { name: 'admin-import', label: 'Import', icon: ImportIcon },
 ]
 
 const showBackButton = computed(() => {
