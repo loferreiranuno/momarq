@@ -42,9 +42,10 @@ interface JobStatsResponse {
   succeededJobs: number
   failedJobs: number
   canceledJobs: number
+  pausedJobs: number
 }
 
-type CrawlJobStatus = 'Queued' | 'Running' | 'Succeeded' | 'Failed' | 'Canceled' | 0 | 1 | 2 | 3 | 4
+type CrawlJobStatus = 'Queued' | 'Running' | 'Succeeded' | 'Failed' | 'Canceled' | 'Paused' | 0 | 1 | 2 | 3 | 4 | 5
 
 interface CreateJobForm {
   providerId: number | null
@@ -92,6 +93,7 @@ const statusOptions: { value: CrawlJobStatus | '', label: string }[] = [
   { value: '', label: 'All Statuses' },
   { value: 'Queued', label: 'Queued' },
   { value: 'Running', label: 'Running' },
+  { value: 'Paused', label: 'Paused' },
   { value: 'Succeeded', label: 'Succeeded' },
   { value: 'Failed', label: 'Failed' },
   { value: 'Canceled', label: 'Canceled' },
@@ -241,6 +243,7 @@ function statusToNumber(status: CrawlJobStatus): number {
     'Succeeded': 2,
     'Failed': 3,
     'Canceled': 4,
+    'Paused': 5,
   }
   return map[status] ?? 0
 }
@@ -253,6 +256,7 @@ function statusToLabel(status: CrawlJobStatus): Exclude<CrawlJobStatus, number> 
     2: 'Succeeded',
     3: 'Failed',
     4: 'Canceled',
+    5: 'Paused',
   }
   return map[status] ?? 'Queued'
 }
@@ -265,6 +269,7 @@ function getStatusClass(status: CrawlJobStatus): string {
     'Succeeded': 'status--succeeded',
     'Failed': 'status--failed',
     'Canceled': 'status--canceled',
+    'Paused': 'status--paused',
   }
   return classes[normalized] || ''
 }
@@ -341,6 +346,30 @@ async function cancelJob(jobId: number) {
     await Promise.all([loadJobs(), loadStats()])
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Failed to cancel job'
+  } finally {
+    actionInProgress.value = null
+  }
+}
+
+async function pauseJob(jobId: number) {
+  actionInProgress.value = jobId
+  try {
+    await api.post(`/api/jobs/${jobId}/pause`)
+    await Promise.all([loadJobs(), loadStats()])
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : 'Failed to pause job'
+  } finally {
+    actionInProgress.value = null
+  }
+}
+
+async function resumeJob(jobId: number) {
+  actionInProgress.value = jobId
+  try {
+    await api.post(`/api/jobs/${jobId}/resume`)
+    await Promise.all([loadJobs(), loadStats()])
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : 'Failed to resume job'
   } finally {
     actionInProgress.value = null
   }
@@ -424,6 +453,10 @@ function isRowExpanded(jobId: number): boolean {
       <div class="stat-card stat-card--running">
         <span class="stat-card__value">{{ stats.runningJobs }}</span>
         <span class="stat-card__label">Running</span>
+      </div>
+      <div class="stat-card stat-card--paused">
+        <span class="stat-card__value">{{ stats.pausedJobs }}</span>
+        <span class="stat-card__label">Paused</span>
       </div>
       <div class="stat-card stat-card--succeeded">
         <span class="stat-card__value">{{ stats.succeededJobs }}</span>
@@ -528,7 +561,23 @@ function isRowExpanded(jobId: number): boolean {
               <td class="admin-jobs__actions" @click.stop>
                 <div class="actions-wrapper">
                   <button
-                    v-if="job.status === 'Queued' || job.status === 'Running'"
+                    v-if="job.status === 'Running'"
+                    class="btn btn--sm btn--warning"
+                    :disabled="actionInProgress === job.id"
+                    @click="pauseJob(job.id)"
+                  >
+                    Pause
+                  </button>
+                  <button
+                    v-if="job.status === 'Paused'"
+                    class="btn btn--sm btn--success"
+                    :disabled="actionInProgress === job.id"
+                    @click="resumeJob(job.id)"
+                  >
+                    Resume
+                  </button>
+                  <button
+                    v-if="job.status === 'Queued' || job.status === 'Running' || job.status === 'Paused'"
                     class="btn btn--sm btn--danger"
                     :disabled="actionInProgress === job.id"
                     @click="cancelJob(job.id)"
@@ -544,7 +593,7 @@ function isRowExpanded(jobId: number): boolean {
                     Retry
                   </button>
                   <button
-                    v-if="job.status === 'Succeeded' || job.status === 'Failed' || job.status === 'Canceled'"
+                    v-if="job.status === 'Succeeded' || job.status === 'Failed' || job.status === 'Canceled' || job.status === 'Paused'"
                     class="btn btn--sm btn--ghost"
                     :disabled="actionInProgress === job.id"
                     @click="deleteJob(job.id)"
@@ -798,6 +847,10 @@ function isRowExpanded(jobId: number): boolean {
   &--failed &__value {
     color: var(--color-danger);
   }
+
+  &--paused &__value {
+    color: var(--color-warning-dark, #92400e);
+  }
 }
 
 .filter-group {
@@ -842,6 +895,11 @@ function isRowExpanded(jobId: number): boolean {
 .status--canceled {
   background: var(--color-muted-bg, #f3f4f6);
   color: var(--color-text-muted, #6b7280);
+}
+
+.status--paused {
+  background: var(--color-warning-bg, #fef3c7);
+  color: var(--color-warning-dark, #92400e);
 }
 
 .progress-cell {

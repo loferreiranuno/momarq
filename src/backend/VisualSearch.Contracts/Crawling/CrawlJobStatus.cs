@@ -18,5 +18,8 @@ public enum CrawlJobStatus
     Failed = 3,
 
     /// <summary>The job was canceled by an admin.</summary>
-    Canceled = 4
+    Canceled = 4,
+
+    /// <summary>The job was paused by an admin and can be resumed later.</summary>
+    Paused = 5
 }

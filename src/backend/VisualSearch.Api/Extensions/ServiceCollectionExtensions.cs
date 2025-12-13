@@ -61,6 +61,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<CategoryService>();
         services.AddScoped<ProviderService>();
         services.AddScoped<ProductService>();
+        services.AddScoped<ProductImportService>();
         services.AddScoped<DashboardService>();
         services.AddScoped<AuthService>();
         services.AddScoped<VisualSearchService>();

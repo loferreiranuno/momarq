@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using Pgvector;
@@ -12,9 +13,11 @@ using VisualSearch.Api.Data;
 namespace VisualSearch.Api.Migrations
 {
     [DbContext(typeof(VisualSearchDbContext))]
-    partial class VisualSearchDbContextModelSnapshot : ModelSnapshot
+    [Migration("20251213212649_FixPauseResumeAndProductImport")]
+    partial class FixPauseResumeAndProductImport
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

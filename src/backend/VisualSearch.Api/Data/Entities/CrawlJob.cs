@@ -89,6 +89,21 @@ public class CrawlJob
     public DateTime? CanceledAt { get; set; }
 
     /// <summary>
+    /// Gets or sets the date and time when the job was paused (UTC).
+    /// </summary>
+    public DateTime? PausedAt { get; set; }
+
+    /// <summary>
+    /// Gets or sets the admin user who paused the job.
+    /// </summary>
+    public int? PausedByAdminUserId { get; set; }
+
+    /// <summary>
+    /// Gets or sets the navigation property to the admin user who paused the job.
+    /// </summary>
+    public AdminUser? PausedByAdminUser { get; set; }
+
+    /// <summary>
     /// Gets or sets the crawled pages for this job.
     /// </summary>
     public ICollection<CrawlPage> Pages { get; set; } = [];

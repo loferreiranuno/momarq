@@ -1,3 +1,5 @@
+using VisualSearch.Contracts.Crawling;
+
 namespace VisualSearch.Api.Data.Entities;
 
 /// <summary>
@@ -80,6 +82,36 @@ public class CrawlExtractedProduct
     /// Gets or sets the raw extraction payload as JSON for auditing.
     /// </summary>
     public string? RawJson { get; set; }
+
+    /// <summary>
+    /// Gets or sets the review/import status of this extracted product.
+    /// </summary>
+    public ExtractedProductStatus Status { get; set; } = ExtractedProductStatus.Pending;
+
+    /// <summary>
+    /// Gets or sets the ID of the imported product if approved.
+    /// </summary>
+    public int? ImportedProductId { get; set; }
+
+    /// <summary>
+    /// Gets or sets the navigation property to the imported product.
+    /// </summary>
+    public Product? ImportedProduct { get; set; }
+
+    /// <summary>
+    /// Gets or sets the date and time when the product was reviewed (UTC).
+    /// </summary>
+    public DateTime? ReviewedAt { get; set; }
+
+    /// <summary>
+    /// Gets or sets the admin user who reviewed this product.
+    /// </summary>
+    public int? ReviewedByAdminUserId { get; set; }
+
+    /// <summary>
+    /// Gets or sets the navigation property to the reviewing admin user.
+    /// </summary>
+    public AdminUser? ReviewedByAdminUser { get; set; }
 
     /// <summary>
     /// Gets or sets the date and time when the extracted product was recorded (UTC).

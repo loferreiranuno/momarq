@@ -61,6 +61,22 @@ public static class JobsEndpoints
             .WithName("CancelJob")
             .WithDescription("Cancels a queued or running job.");
 
+        // Pause a job
+        group.MapPost("/{id:long}/pause", PauseJobAsync)
+            .Produces<CrawlJobDto>(200)
+            .Produces(400)
+            .Produces(404)
+            .WithName("PauseJob")
+            .WithDescription("Pauses a queued or running job. Can be resumed later.");
+
+        // Resume a paused job
+        group.MapPost("/{id:long}/resume", ResumeJobAsync)
+            .Produces<CrawlJobDto>(200)
+            .Produces(400)
+            .Produces(404)
+            .WithName("ResumeJob")
+            .WithDescription("Resumes a paused job.");
+
         // Retry a failed/canceled job
         group.MapPost("/{id:long}/retry", RetryJobAsync)
             .Produces<CrawlJobDto>(201)
@@ -476,6 +492,100 @@ public static class JobsEndpoints
         });
     }
 
+    private static async Task<IResult> PauseJobAsync(
+        long id,
+        VisualSearchDbContext db,
+        HttpContext httpContext,
+        CancellationToken ct)
+    {
+        var job = await db.CrawlJobs.FindAsync([id], ct);
+        if (job is null)
+        {
+            return Results.NotFound(new { error = "Job not found" });
+        }
+
+        if (job.Status is not (CrawlJobStatus.Queued or CrawlJobStatus.Running))
+        {
+            return Results.BadRequest(new { error = "Can only pause queued or running jobs" });
+        }
+
+        int? adminUserId = null;
+        var userIdClaim = httpContext.User.FindFirst("userId")?.Value;
+        if (int.TryParse(userIdClaim, out var uid))
+        {
+            adminUserId = uid;
+        }
+
+        job.Status = CrawlJobStatus.Paused;
+        job.PausedAt = DateTime.UtcNow;
+        job.PausedByAdminUserId = adminUserId;
+        job.LeaseOwner = null;
+        job.LeaseExpiresAt = null;
+        await db.SaveChangesAsync(ct);
+
+        var pagesCount = await db.CrawlPages.CountAsync(p => p.CrawlJobId == id, ct);
+        var pagesProcessed = await db.CrawlPages.CountAsync(p => p.CrawlJobId == id && (p.Status == CrawlPageStatus.Succeeded || p.Status == CrawlPageStatus.Failed), ct);
+        var productsCount = await db.CrawlExtractedProducts.CountAsync(p => p.CrawlJobId == id, ct);
+        var errorsCount = await db.CrawlPages.CountAsync(p => p.CrawlJobId == id && p.Status == CrawlPageStatus.Failed, ct);
+
+        return Results.Ok(new CrawlJobDto
+        {
+            Id = job.Id,
+            ProviderId = job.ProviderId,
+            Status = job.Status,
+            CreatedAtUtc = job.CreatedAt,
+            StartedAtUtc = job.StartedAt,
+            FinishedAtUtc = job.PausedAt,
+            PagesTotal = pagesCount,
+            PagesProcessed = pagesProcessed,
+            ProductsExtracted = productsCount,
+            ErrorsCount = errorsCount,
+            LastError = job.ErrorMessage
+        });
+    }
+
+    private static async Task<IResult> ResumeJobAsync(
+        long id,
+        VisualSearchDbContext db,
+        CancellationToken ct)
+    {
+        var job = await db.CrawlJobs.FindAsync([id], ct);
+        if (job is null)
+        {
+            return Results.NotFound(new { error = "Job not found" });
+        }
+
+        if (job.Status != CrawlJobStatus.Paused)
+        {
+            return Results.BadRequest(new { error = "Can only resume paused jobs" });
+        }
+
+        job.Status = CrawlJobStatus.Queued;
+        job.PausedAt = null;
+        job.PausedByAdminUserId = null;
+        await db.SaveChangesAsync(ct);
+
+        var pagesCount = await db.CrawlPages.CountAsync(p => p.CrawlJobId == id, ct);
+        var pagesProcessed = await db.CrawlPages.CountAsync(p => p.CrawlJobId == id && (p.Status == CrawlPageStatus.Succeeded || p.Status == CrawlPageStatus.Failed), ct);
+        var productsCount = await db.CrawlExtractedProducts.CountAsync(p => p.CrawlJobId == id, ct);
+        var errorsCount = await db.CrawlPages.CountAsync(p => p.CrawlJobId == id && p.Status == CrawlPageStatus.Failed, ct);
+
+        return Results.Ok(new CrawlJobDto
+        {
+            Id = job.Id,
+            ProviderId = job.ProviderId,
+            Status = job.Status,
+            CreatedAtUtc = job.CreatedAt,
+            StartedAtUtc = job.StartedAt,
+            FinishedAtUtc = null,
+            PagesTotal = pagesCount,
+            PagesProcessed = pagesProcessed,
+            ProductsExtracted = productsCount,
+            ErrorsCount = errorsCount,
+            LastError = job.ErrorMessage
+        });
+    }
+
     private static async Task<IResult> RetryJobAsync(
         long id,
         VisualSearchDbContext db,
@@ -571,7 +681,8 @@ public static class JobsEndpoints
                 RunningJobs = g.Count(j => j.Status == CrawlJobStatus.Running),
                 SucceededJobs = g.Count(j => j.Status == CrawlJobStatus.Succeeded),
                 FailedJobs = g.Count(j => j.Status == CrawlJobStatus.Failed),
-                CanceledJobs = g.Count(j => j.Status == CrawlJobStatus.Canceled)
+                CanceledJobs = g.Count(j => j.Status == CrawlJobStatus.Canceled),
+                PausedJobs = g.Count(j => j.Status == CrawlJobStatus.Paused)
             })
             .FirstOrDefaultAsync(ct);
 
@@ -620,6 +731,7 @@ public sealed record JobStatsResponse
     public int SucceededJobs { get; init; }
     public int FailedJobs { get; init; }
     public int CanceledJobs { get; init; }
+    public int PausedJobs { get; init; }
 }
 
 public sealed record JobsSsePayload

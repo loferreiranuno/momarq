@@ -166,6 +166,9 @@ app.MapAdminEndpoints();
 // Map jobs endpoints for crawl job management
 app.MapJobsEndpoints();
 
+// Map product import endpoints for reviewing extracted products
+app.MapProductImportEndpoints();
+
 // ========== Run Application ==========
 
 app.Run();

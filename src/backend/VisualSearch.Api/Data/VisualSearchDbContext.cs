@@ -387,6 +387,12 @@ public class VisualSearchDbContext : DbContext
             entity.Property(e => e.CanceledAt)
                 .HasColumnName("canceled_at");
 
+            entity.Property(e => e.PausedAt)
+                .HasColumnName("paused_at");
+
+            entity.Property(e => e.PausedByAdminUserId)
+                .HasColumnName("paused_by_admin_user_id");
+
             entity.HasOne(e => e.Provider)
                 .WithMany()
                 .HasForeignKey(e => e.ProviderId)
@@ -395,6 +401,11 @@ public class VisualSearchDbContext : DbContext
             entity.HasOne(e => e.RequestedByAdminUser)
                 .WithMany()
                 .HasForeignKey(e => e.RequestedByAdminUserId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(e => e.PausedByAdminUser)
+                .WithMany()
+                .HasForeignKey(e => e.PausedByAdminUserId)
                 .OnDelete(DeleteBehavior.SetNull);
 
             entity.HasIndex(e => e.ProviderId);
@@ -518,6 +529,20 @@ public class VisualSearchDbContext : DbContext
                 .HasColumnName("raw_json")
                 .HasColumnType("text");
 
+            entity.Property(e => e.Status)
+                .HasColumnName("status")
+                .HasConversion<int>()
+                .HasDefaultValue(ExtractedProductStatus.Pending);
+
+            entity.Property(e => e.ImportedProductId)
+                .HasColumnName("imported_product_id");
+
+            entity.Property(e => e.ReviewedAt)
+                .HasColumnName("reviewed_at");
+
+            entity.Property(e => e.ReviewedByAdminUserId)
+                .HasColumnName("reviewed_by_admin_user_id");
+
             entity.Property(e => e.CreatedAt)
                 .HasColumnName(CreatedAtColumnName)
                 .HasDefaultValueSql(CurrentTimestampSql);
@@ -537,9 +562,21 @@ public class VisualSearchDbContext : DbContext
                 .HasForeignKey(e => e.ProviderId)
                 .OnDelete(DeleteBehavior.Restrict);
 
+            entity.HasOne(e => e.ImportedProduct)
+                .WithMany()
+                .HasForeignKey(e => e.ImportedProductId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(e => e.ReviewedByAdminUser)
+                .WithMany()
+                .HasForeignKey(e => e.ReviewedByAdminUserId)
+                .OnDelete(DeleteBehavior.SetNull);
+
             entity.HasIndex(e => e.CrawlJobId);
             entity.HasIndex(e => e.CrawlPageId);
             entity.HasIndex(e => e.ProviderId);
+            entity.HasIndex(e => e.Status);
+            entity.HasIndex(e => e.ImportedProductId);
             entity.HasIndex(e => new { e.ProviderId, e.ExternalId })
                 .HasFilter("external_id IS NOT NULL");
             entity.HasIndex(e => e.CreatedAt);

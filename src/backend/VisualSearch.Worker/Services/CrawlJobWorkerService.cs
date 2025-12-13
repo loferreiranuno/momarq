@@ -254,11 +254,16 @@ public sealed class CrawlJobWorkerService : BackgroundService
         {
             if (ct.IsCancellationRequested) break;
 
-            // Check if job was cancelled
+            // Check if job was cancelled or paused
             var currentJob = await db.CrawlJobs.FindAsync([job.Id], ct);
             if (currentJob?.Status == CrawlJobStatus.Canceled)
             {
                 _logger.LogInformation("Job {JobId} was cancelled, stopping processing", job.Id);
+                break;
+            }
+            if (currentJob?.Status == CrawlJobStatus.Paused)
+            {
+                _logger.LogInformation("Job {JobId} was paused, stopping processing. Job can be resumed later.", job.Id);
                 break;
             }
 
@@ -274,12 +279,13 @@ public sealed class CrawlJobWorkerService : BackgroundService
                 page.ContentType = result.ContentType;
                 page.Title = result.Title;
                 page.ContentSha256 = result.ContentHash;
-                page.Content = result.Content;
                 page.FetchedAt = DateTime.UtcNow;
 
                 if (result.Success)
                 {
                     page.Status = CrawlPageStatus.Succeeded;
+                    // Clear content after successful extraction (storage optimization)
+                    page.Content = null;
 
                     // Save extracted products
                     foreach (var product in result.Products)
@@ -339,6 +345,8 @@ public sealed class CrawlJobWorkerService : BackgroundService
                 {
                     page.Status = CrawlPageStatus.Failed;
                     page.ErrorMessage = result.Error;
+                    // Keep content for failed pages for debugging purposes
+                    page.Content = result.Content;
                     errorCount++;
 
                     _logger.LogWarning(

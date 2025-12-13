@@ -196,6 +196,43 @@ a {
     padding: var(--space-4) var(--space-8);
     font-size: var(--text-base);
   }
+
+  &--danger {
+    background-color: var(--color-error);
+    color: var(--color-surface);
+    
+    &:hover:not(:disabled) {
+      background-color: #9f5a4e;
+    }
+  }
+
+  &--success {
+    background-color: var(--color-success);
+    color: var(--color-surface);
+    
+    &:hover:not(:disabled) {
+      background-color: #6a7a5e;
+    }
+  }
+
+  &--warning {
+    background-color: var(--color-warning);
+    color: var(--color-surface);
+    
+    &:hover:not(:disabled) {
+      background-color: #b39463;
+    }
+  }
+
+  &--outline {
+    background-color: transparent;
+    color: var(--color-text-primary);
+    border-color: var(--color-border);
+    
+    &:hover:not(:disabled) {
+      background-color: var(--color-surface-hover);
+    }
+  }
 }
 
 // Inputs
