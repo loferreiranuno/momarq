@@ -578,7 +578,7 @@ function isRowExpanded(jobId: number): boolean {
               <td class="admin-jobs__actions" @click.stop>
                 <div class="actions-wrapper">
                   <button
-                    v-if="job.status === 'Running'"
+                    v-if="statusToLabel(job.status) === 'Running'"
                     class="btn btn--sm btn--warning"
                     :disabled="actionInProgress === job.id"
                     @click="pauseJob(job.id)"
@@ -586,7 +586,7 @@ function isRowExpanded(jobId: number): boolean {
                     Pause
                   </button>
                   <button
-                    v-if="job.status === 'Paused'"
+                    v-if="statusToLabel(job.status) === 'Paused'"
                     class="btn btn--sm btn--success"
                     :disabled="actionInProgress === job.id"
                     @click="resumeJob(job.id)"
@@ -594,7 +594,7 @@ function isRowExpanded(jobId: number): boolean {
                     Resume
                   </button>
                   <button
-                    v-if="job.status === 'Queued' || job.status === 'Running' || job.status === 'Paused'"
+                    v-if="['Queued', 'Running', 'Paused'].includes(statusToLabel(job.status))"
                     class="btn btn--sm btn--danger"
                     :disabled="actionInProgress === job.id"
                     @click="cancelJob(job.id)"
@@ -602,7 +602,7 @@ function isRowExpanded(jobId: number): boolean {
                     Cancel
                   </button>
                   <button
-                    v-if="job.status === 'Failed' || job.status === 'Canceled'"
+                    v-if="['Failed', 'Canceled'].includes(statusToLabel(job.status))"
                     class="btn btn--sm btn--outline"
                     :disabled="actionInProgress === job.id"
                     @click="retryJob(job.id)"
@@ -610,7 +610,7 @@ function isRowExpanded(jobId: number): boolean {
                     Retry
                   </button>
                   <button
-                    v-if="job.status === 'Succeeded' || job.status === 'Failed' || job.status === 'Canceled' || job.status === 'Paused'"
+                    v-if="['Succeeded', 'Failed', 'Canceled', 'Paused'].includes(statusToLabel(job.status))"
                     class="btn btn--sm btn--ghost"
                     :disabled="actionInProgress === job.id"
                     @click="confirmDelete(job.id)"
