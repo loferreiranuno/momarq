@@ -26,10 +26,20 @@ RUN python3 -m venv /opt/venv && /opt/venv/bin/pip install --upgrade pip ultraly
 
 ENV PATH="/opt/venv/bin:$PATH"
 
+# Local/dev escape hatch for environments with TLS interception proxies.
+# Keep secure verification as default; override with HF_CURL_INSECURE=1 when needed.
+ARG HF_CURL_INSECURE=0
+
 # 2. CLIP ViT-L/14 quantized (public)
-RUN curl -L --fail --retry 3 --max-time 1800 \
-    "https://huggingface.co/Xenova/clip-vit-large-patch14/resolve/main/onnx/vision_model_quantized.onnx" \
-    -o clip-vit-large-patch14-visual.onnx
+RUN if [ "$HF_CURL_INSECURE" = "1" ]; then \
+            curl -k -L --fail --retry 3 --max-time 1800 \
+                "https://huggingface.co/Xenova/clip-vit-large-patch14/resolve/main/onnx/vision_model_quantized.onnx" \
+                -o clip-vit-large-patch14-visual.onnx; \
+        else \
+            curl -L --fail --retry 3 --max-time 1800 \
+                "https://huggingface.co/Xenova/clip-vit-large-patch14/resolve/main/onnx/vision_model_quantized.onnx" \
+                -o clip-vit-large-patch14-visual.onnx; \
+        fi
 
 # 3. YOLO-World v2 s (open-vocabulary detection) with FP16 for faster CPU inference
 RUN python3 - <<'PY'

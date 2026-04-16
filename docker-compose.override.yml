@@ -2,12 +2,14 @@
 services:
   postgres:
     ports:
-      - "5432:5432"  # Expose for local tooling (pgAdmin, DBeaver, etc.)
+      - "${POSTGRES_HOST_PORT:-5433}:5432"  # Expose for local tooling without colliding with other local Postgres instances
 
   api:
     build:
       context: ./src/backend
       dockerfile: VisualSearch.Api/Dockerfile
+      args:
+        HF_CURL_INSECURE: ${HF_CURL_INSECURE:-1}
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       - ConnectionStrings__DefaultConnection=Host=postgres;Database=visualsearch;Username=vsuser;Password=vspassword123
